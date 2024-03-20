@@ -1,0 +1,64 @@
+# This configuration is intended for development purpose, it's **your** responsibility to harden it for production
+name: hc-professional-gateway
+services:
+  app:
+    image: hc-hc-professional-gateway:0.0.1
+    container_name: hc-hc-professional-gateway
+    hostname: hc-professional-gateway
+    env_file: .env
+    environment:
+      - _JAVA_OPTIONS=-Xmx256m -Xms128m
+      - SERVER_PORT=5505
+      - SPRING_PROFILES_ACTIVE=dev,swagger
+      - MANAGEMENT_METRICS_EXPORT_PROMETHEUS_ENABLED=true
+      # CORS CONFIG
+      - JHIPSTER_CORS_ALLOWED_ORIGINS=http://localhost:5501,http://localhost:4200,https://hc-professional-dashboard.jojoaddison.net,https://hc-professional-gateway.jojoaddison.net
+      # SPRING CLOUD
+      - SPRING_CLOUD_CONSUL_HOST=dev_consul
+      - SPRING_CLOUD_CONSUL_PORT=8500
+      - SPRING_DATA_MONGODB_URI=mongodb://dev_mongodb:27017
+      - SPRING_DATA_MONGODB_DATABASE=PatientGateway
+      - SPRING_CLOUD_STREAM_KAFKA_BROKERS=dev_kafka:9092
+      - SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS=dev_kafka:9092
+      # JHIPSTER CONFIG
+      - JHIPSTER_SLEEP=5 # gives time for other services to boot before the application
+      #- JHIPSTER_METRICS_LOGS_ENABLED=true
+      - JHIPSTER_MAIL_FROM=$${SMTP_MAIL_FROM}
+      - JHIPSTER_MAIL_BASEURL=$${SMTP_MAIL_BASE}
+      # SMTP Mail Config Start
+      - SPRING_MAIL_USERNAME=$${SMTP_MAIL_USER}
+      - SPRING_MAIL_PASSWORD=$${SMTP_MAIL_PASSWORD}
+      - SPRING_MAIL_HOST=$${SMTP_MAIL_SERVER}
+      - SPRING_MAIL_PORT=$${SMTP_MAIL_PORT}
+      - SPRING_MAIL_FROM=$${SMTP_MAIL_FROM}
+      # SMTP Mail Config End
+      - SPRING_MAIL_TEST_CONNECTION=true
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH=true
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_DEBUG=true
+      #- SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE=true
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_SOCKETFACTORY_PORT=465
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_SOCKETFACTORY_CLASS=javax.net.ssl.SSLSocketFactory
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_SSL_ENABLE=true
+      - SPRING_MAIL_PROPERTIES_MAIL_SMTP_TRANSPORT_PROTOCOL=smtp
+      - SPRINT_MAIL_PROPERTIES_MAIL_SMTP_TIMEOUT=5000
+      - SPRINT_MAIL_PROPERTIES_MAIL_SMTP_WRITETIMEOUT=5000
+      - SPRINT_MAIL_PROPERTIES_MAIL_SMTP_CONNECTIONTIMEOUT=5000
+      - MAIL_SMTP_STARTTLS_ENABLE=false
+    ports:
+      - 127.0.0.1:5505:5505
+    networks:
+      - devnet
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -f
+        - http://localhost:5505/management/health
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+networks:
+  devnet:
+    external: true
+    name: devnet
