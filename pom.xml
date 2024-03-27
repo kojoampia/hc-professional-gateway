@@ -5,7 +5,7 @@
 
     <groupId>net.jojoaddison</groupId>
     <artifactId>hc-professional-gateway</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.0.1</version>
     <packaging>jar</packaging>
     <name>Hc Professional Gateway</name>
     <description>Description for Hc Professional Gateway</description>
@@ -313,6 +313,7 @@
 
     <build>
         <defaultGoal>spring-boot:run</defaultGoal>
+        <finalName>${project.artifactId}</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
@@ -434,7 +435,7 @@
                             </platforms>
                         </from>
                         <to>
-                            <image>hcprofessionalgateway:latest</image>
+                            <image>${build.finalName}:${project.version}</image>
                         </to>
                         <container>
                             <entrypoint>
