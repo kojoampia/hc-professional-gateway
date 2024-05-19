@@ -36,11 +36,18 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
 
     private final AuthorityRepository authorityRepository;
+    private final ProfileGateway profileGatewayProxy;
 
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, AuthorityRepository authorityRepository) {
+    public UserService(
+        UserRepository userRepository,
+        PasswordEncoder passwordEncoder,
+        AuthorityRepository authorityRepository,
+        ProfileGateway profileGatewayProxy
+    ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authorityRepository = authorityRepository;
+        this.profileGatewayProxy = profileGatewayProxy;
     }
 
     public Mono<User> activateRegistration(String key) {
@@ -311,5 +318,15 @@ public class UserService {
      */
     public Flux<String> getAuthorities() {
         return authorityRepository.findAll().map(Authority::getName);
+    }
+
+    public Map<String, Object> createProfile(User user) {
+        Map<String, Object> mappedUser = new HashMap<>();
+        mappedUser.put("login", user.getLogin());
+        mappedUser.put("email", user.getEmail());
+        mappedUser.put("firstName", user.getFirstName());
+        mappedUser.put("lastName", user.getLastName());
+        this.profileGatewayProxy.createProfile(mappedUser);
+        return mappedUser;
     }
 }

@@ -4,7 +4,7 @@
     "authenticationType": "jwt",
     "baseName": "hcProfessionalGateway",
     "buildTool": "maven",
-    "cacheProvider": "hazelcast",
+    "cacheProvider": "no",
     "creationTimestamp": 1707497116865,
     "databaseType": "mongodb",
     "devDatabaseType": "mongodb",

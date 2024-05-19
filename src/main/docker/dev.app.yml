@@ -8,7 +8,7 @@ services:
     env_file: .env
     environment:
       - _JAVA_OPTIONS=-Xmx256m -Xms128m
-      - SERVER_PORT=5505
+      - SERVER_PORT=5506
       - SPRING_PROFILES_ACTIVE=dev,swagger
       - MANAGEMENT_METRICS_EXPORT_PROMETHEUS_ENABLED=true
       # CORS CONFIG
