@@ -8,7 +8,7 @@ services:
     env_file: .env
     environment:
       - _JAVA_OPTIONS=-Xmx256m -Xms128m
-      - SERVER_PORT=5506
+      - SERVER_PORT=5502
       - SPRING_PROFILES_ACTIVE=dev,swagger
       - MANAGEMENT_METRICS_EXPORT_PROMETHEUS_ENABLED=true
       # CORS CONFIG
@@ -45,7 +45,7 @@ services:
       - SPRINT_MAIL_PROPERTIES_MAIL_SMTP_CONNECTIONTIMEOUT=5000
       - MAIL_SMTP_STARTTLS_ENABLE=false
     ports:
-      - 127.0.0.1:5505:5505
+      - 127.0.0.1:5502:5502
     networks:
       - devnet
     healthcheck:
@@ -53,7 +53,7 @@ services:
         - CMD
         - curl
         - -f
-        - http://localhost:5505/management/health
+        - http://localhost:5502/management/health
       interval: 5s
       timeout: 5s
       retries: 40
