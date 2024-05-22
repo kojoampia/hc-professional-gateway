@@ -1,5 +1,6 @@
 package net.jojoaddison.web.rest;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.domain.User;
 import net.jojoaddison.repository.UserRepository;
@@ -17,6 +18,9 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 @AutoConfigureWebTestClient(timeout = IntegrationTest.DEFAULT_TIMEOUT)
 @IntegrationTest
 class AuthenticateControllerIT {
+
+    @Autowired
+    private ObjectMapper om;
 
     @Autowired
     private UserRepository userRepository;
@@ -44,7 +48,7 @@ class AuthenticateControllerIT {
             .post()
             .uri("/api/authenticate")
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(TestUtil.convertObjectToJsonBytes(login))
+            .bodyValue(om.writeValueAsBytes(login))
             .exchange()
             .expectStatus()
             .isOk()
@@ -73,7 +77,7 @@ class AuthenticateControllerIT {
             .post()
             .uri("/api/authenticate")
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(TestUtil.convertObjectToJsonBytes(login))
+            .bodyValue(om.writeValueAsBytes(login))
             .exchange()
             .expectStatus()
             .isOk()
@@ -93,7 +97,7 @@ class AuthenticateControllerIT {
             .post()
             .uri("/api/authenticate")
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(TestUtil.convertObjectToJsonBytes(login))
+            .bodyValue(om.writeValueAsBytes(login))
             .exchange()
             .expectStatus()
             .isUnauthorized()

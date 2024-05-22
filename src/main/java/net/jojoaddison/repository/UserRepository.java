@@ -9,7 +9,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
- * Spring Data MongoDB repository for the {@link User} entity.
+ * Spring Data MongoDB reactive repository for the {@link User} entity.
  */
 @Repository
 public interface UserRepository extends ReactiveMongoRepository<User, String> {
