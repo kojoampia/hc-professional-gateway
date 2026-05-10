@@ -8,11 +8,11 @@ services:
     env_file: .env
     environment:
       - _JAVA_OPTIONS=-Xmx256m -Xms128m
-      - SERVER_PORT=5505
+      - SERVER_PORT=5504
       - SPRING_PROFILES_ACTIVE=dev,swagger
       - MANAGEMENT_METRICS_EXPORT_PROMETHEUS_ENABLED=true
       # CORS CONFIG
-      - JHIPSTER_CORS_ALLOWED_ORIGINS=http://localhost:5502,http://localhost:4200,https://hc-professional-dashboard.jojoaddison.net,https://hc-professional-gateway.jojoaddison.net
+      - CORS_ALLOWED_ORIGINS=http://localhost:5503,http://localhost:5505,https://hc-professional-dashboard.jojoaddison.net,https://hc-professional-gateway.jojoaddison.net
       # SPRING CLOUD
       - SPRING_CLOUD_CONSUL_HOST=dev_consul
       - SPRING_CLOUD_CONSUL_PORT=8500
