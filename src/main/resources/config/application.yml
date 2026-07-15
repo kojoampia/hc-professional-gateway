@@ -133,7 +133,7 @@ spring:
         pool:
           max-connections: 1000
     function:
-      definition: kafkaConsumer
+      definition: #kafkaConsumer; kafkaProducer
     stream:
       kafka:
         binder:

@@ -1,6 +1,7 @@
 package net.jojoaddison.config.dbmigrations;
 
 import java.time.Instant;
+import java.util.UUID;
 import net.jojoaddison.config.Constants;
 import net.jojoaddison.domain.Authority;
 import net.jojoaddison.domain.User;
@@ -10,6 +11,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 /**
@@ -19,9 +21,19 @@ import org.springframework.stereotype.Component;
 public class InitialSetupMigration implements ApplicationRunner {
 
     private final MongoTemplate template;
+    private final PasswordEncoder passwordEncoder;
+    private static org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(InitialSetupMigration.class);
 
-    public InitialSetupMigration(MongoTemplate template) {
+    public InitialSetupMigration(MongoTemplate template, PasswordEncoder passwordEncoder) {
         this.template = template;
+        this.passwordEncoder = passwordEncoder;
+        cleanup();
+    }
+
+    public void cleanup() {
+        template.dropCollection(Authority.class);
+        template.dropCollection(User.class);
+        logger.info("Dropped Authority and User collections");
     }
 
     @Override
@@ -30,6 +42,12 @@ public class InitialSetupMigration implements ApplicationRunner {
         Authority adminAuthority = saveAuthorityIfMissing(createAdminAuthority());
         saveUserIfMissing(createUser(userAuthority), "user");
         saveUserIfMissing(createAdmin(adminAuthority, userAuthority), "admin");
+        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createDoctorAuthority()), "doctor"), "doctor");
+        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createNurseAuthority()), "nurse"), "nurse");
+        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createAngelAuthority()), "angel"), "angel");
+        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createCarerAuthority()), "carer"), "carer");
+        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createParamedicAuthority()), "paramedic"), "paramedic");
+        logger.info("Initial setup migration completed successfully");
     }
 
     private Authority createAuthority(String authority) {
@@ -45,6 +63,31 @@ public class InitialSetupMigration implements ApplicationRunner {
 
     private Authority createUserAuthority() {
         Authority userAuthority = createAuthority(AuthoritiesConstants.USER);
+        return userAuthority;
+    }
+
+    private Authority createDoctorAuthority() {
+        Authority userAuthority = createAuthority(AuthoritiesConstants.DOCTOR);
+        return userAuthority;
+    }
+
+    private Authority createNurseAuthority() {
+        Authority userAuthority = createAuthority(AuthoritiesConstants.NURSE);
+        return userAuthority;
+    }
+
+    private Authority createAngelAuthority() {
+        Authority userAuthority = createAuthority(AuthoritiesConstants.ANGEL);
+        return userAuthority;
+    }
+
+    private Authority createCarerAuthority() {
+        Authority userAuthority = createAuthority(AuthoritiesConstants.CARER);
+        return userAuthority;
+    }
+
+    private Authority createParamedicAuthority() {
+        Authority userAuthority = createAuthority(AuthoritiesConstants.PARAMEDIC);
         return userAuthority;
     }
 
@@ -65,9 +108,15 @@ public class InitialSetupMigration implements ApplicationRunner {
 
     private User createUser(Authority userAuthority) {
         User userUser = new User();
+        String login = "user";
+        String password = (Character.toUpperCase(login.charAt(0)) + login.substring(1) + "@");
+        for (int i = 0; i < login.length(); i++) {
+            password += i;
+        }
+        logger.info("Creating user with login: {} and password: {}", login, password);
         userUser.setId("user-2");
         userUser.setLogin("user");
-        userUser.setPassword("$2a$10$VEjxo0jq2YG9Rbk2HmX9S.k1uZBGYUHdUcid3g/vfiEl7lwWgOH/K");
+        userUser.setPassword(passwordEncoder.encode(password));
         userUser.setFirstName("User");
         userUser.setLastName("User");
         userUser.setEmail("user@localhost");
@@ -81,9 +130,15 @@ public class InitialSetupMigration implements ApplicationRunner {
 
     private User createAdmin(Authority adminAuthority, Authority userAuthority) {
         User adminUser = new User();
+        String login = "admin";
+        String password = (Character.toUpperCase(login.charAt(0)) + login.substring(1) + "@");
+        for (int i = 0; i < login.length(); i++) {
+            password += i;
+        }
+        logger.info("Creating admin with login: {} and password: {}", login, password);
         adminUser.setId("user-1");
         adminUser.setLogin("admin");
-        adminUser.setPassword("$2a$10$gSAhZrxMllrbgj/kkK9UceBPpChGWJA7SYIb1Mqo.n5aNLq1/oRrC");
+        adminUser.setPassword(passwordEncoder.encode(password));
         adminUser.setFirstName("admin");
         adminUser.setLastName("Administrator");
         adminUser.setEmail("admin@localhost");
@@ -94,5 +149,25 @@ public class InitialSetupMigration implements ApplicationRunner {
         adminUser.getAuthorities().add(adminAuthority);
         adminUser.getAuthorities().add(userAuthority);
         return adminUser;
+    }
+
+    private User createProfessional(Authority professionalAuthority, String login) {
+        User professionalUser = new User();
+        String password = (Character.toUpperCase(login.charAt(0)) + login.substring(1) + "@");
+        for (int i = 1; i < login.length(); i++) {
+            password += i;
+        }
+        professionalUser.setId(UUID.randomUUID().toString());
+        professionalUser.setLogin(login);
+        professionalUser.setPassword(passwordEncoder.encode(password));
+        professionalUser.setFirstName("Professional");
+        professionalUser.setLastName(Character.toUpperCase(login.charAt(0)) + login.substring(1));
+        professionalUser.setEmail(login + "@localhost");
+        professionalUser.setActivated(true);
+        professionalUser.setLangKey("en");
+        professionalUser.setCreatedBy(Constants.SYSTEM);
+        professionalUser.setCreatedDate(Instant.now());
+        professionalUser.getAuthorities().add(professionalAuthority);
+        return professionalUser;
     }
 }
