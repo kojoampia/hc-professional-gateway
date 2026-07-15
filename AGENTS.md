@@ -55,7 +55,7 @@
 
 ## Technology Stack
 
-- Java 26
+- Java 25
 - Spring Boot 4
 - Spring Web, Spring Data JPA, Spring Security, Spring Kafka, Spring Cloud AWS
 - PostgreSQL

@@ -8,12 +8,13 @@ import com.nimbusds.jose.util.Base64;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
-import java.util.Collections;
+import java.util.List;
 import javax.crypto.Mac;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import net.jojoaddison.repository.UserRepository;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.mockito.Mockito;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.security.core.userdetails.ReactiveUserDetailsService;
 import org.springframework.security.crypto.codec.Hex;
@@ -23,6 +24,7 @@ import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 
+@TestConfiguration(proxyBeanMethods = false)
 public class JwtAuthenticationTestUtils {
 
     @Bean
@@ -30,11 +32,15 @@ public class JwtAuthenticationTestUtils {
         return new SimpleMeterRegistry();
     }
 
-    @MockBean
-    private ReactiveUserDetailsService userDetailsService;
+    @Bean
+    ReactiveUserDetailsService userDetailsService() {
+        return Mockito.mock(ReactiveUserDetailsService.class);
+    }
 
-    @MockBean
-    private UserRepository userRepository;
+    @Bean
+    UserRepository userRepository() {
+        return Mockito.mock(UserRepository.class);
+    }
 
     public static String createValidToken(String jwtKey) {
         return createValidTokenForUser(jwtKey, "anonymous");
@@ -49,7 +55,7 @@ public class JwtAuthenticationTestUtils {
             .issuedAt(now)
             .expiresAt(now.plusSeconds(60))
             .subject(user)
-            .claims(customClaim -> customClaim.put(AUTHORITIES_KEY, Collections.singletonList("ROLE_ADMIN")))
+            .claims(customClaim -> customClaim.put(AUTHORITIES_KEY, List.of("ROLE_ADMIN")))
             .build();
 
         JwsHeader jwsHeader = JwsHeader.with(JWT_ALGORITHM).build();

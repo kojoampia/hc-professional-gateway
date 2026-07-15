@@ -18,6 +18,10 @@ logging:
     ROOT: INFO
     tech.jhipster: INFO
     net.jojoaddison: INFO
+    org.apache.kafka.clients.admin.internals.AdminMetadataManager: ERROR
+    org.apache.kafka.clients.consumer.internals.ConsumerMetadataManager: ERROR
+    org.apache.kafka.clients.producer.internals.ProducerMetadataManager: ERROR
+    org.apache.kafka.clients.NetworkClient: ERROR
 
 management:
   prometheus:

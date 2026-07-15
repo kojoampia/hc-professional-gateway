@@ -19,6 +19,10 @@ logging:
     tech.jhipster: DEBUG
     org.hibernate.SQL: DEBUG
     net.jojoaddison: DEBUG
+    org.apache.kafka.clients.admin.internals.AdminMetadataManager: ERROR
+    org.apache.kafka.clients.consumer.internals.ConsumerMetadataManager: ERROR
+    org.apache.kafka.clients.producer.internals.ProducerMetadataManager: ERROR
+    org.apache.kafka.clients.NetworkClient: ERROR
 
 management:
   zipkin: # Use the "zipkin" Maven profile to have the Spring Cloud Zipkin dependencies
@@ -54,9 +58,8 @@ spring:
           - git-branch=${git.branch:}
       host: localhost
       port: 8500
-  data:
-    mongodb:
-      uri: mongodb://localhost:27017/hcProfessionalGateway?waitQueueMultiple=1000
+  mongodb:
+    uri: ${SPRING_MONGODB_URI:${MONGODB_URI:${SPRING_DATA_MONGODB_URI:mongodb://localhost:27017/professionalGateway?waitQueueMultiple=1000}}}
   mail:
     host: localhost
     port: 25

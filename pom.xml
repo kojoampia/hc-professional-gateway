@@ -3,6 +3,13 @@
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.0</version>
+        <relativePath/>
+    </parent>
+
     <groupId>net.jojoaddison</groupId>
     <artifactId>hc-professional-gateway</artifactId>
     <version>0.0.1</version>
@@ -16,7 +23,7 @@
             The spring-boot version should match the one managed by spring-boot-dependencies ${spring-boot.version}
         -->
         <maven.version>3.2.5</maven.version>
-        <java.version>26</java.version>
+        <java.version>25</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.build.timestamp.format>yyyyMMddHHmmss</maven.build.timestamp.format>
@@ -26,19 +33,20 @@
         <argLine>-Djava.security.egd=file:/dev/./urandom -Xmx1G</argLine>
         <m2e.apt.activation>jdt_apt</m2e.apt.activation>
         <run.addResources>false</run.addResources>
-        <jhipster-framework.version>9.0.0</jhipster-framework.version>
-        <spring-boot.version>4.0.3</spring-boot.version>
-        <spring-cloud.version>2025.1.1</spring-cloud.version>
-        <mongock.version>5.5.1</mongock.version>
+        <jhipster-framework.version>9.1.0</jhipster-framework.version>
+        <spring-boot.version>4.1.0</spring-boot.version>
+        <spring-cloud.version>2025.1.2</spring-cloud.version>
         <feign-reactor-bom.version>4.2.1</feign-reactor-bom.version>
-        <springdoc.version>3.0.2</springdoc.version>
+        <springdoc.version>3.0.3</springdoc.version>
+        <micrometer-context-propagation.version>1.2.1</micrometer-context-propagation.version>
+        <testcontainers.version>2.0.5</testcontainers.version>
         <archunit-junit5.version>1.4.2</archunit-junit5.version>
         <blockhound-junit-platform.version>1.0.8.RELEASE</blockhound-junit-platform.version>
         <checkstyle.version>10.12.5</checkstyle.version>
         <git-commit-id-maven-plugin.version>9.0.2</git-commit-id-maven-plugin.version>
         <jacoco-maven-plugin.version>0.8.14</jacoco-maven-plugin.version>
         <jib-maven-plugin.architecture>amd64</jib-maven-plugin.architecture>
-        <jib-maven-plugin.image>eclipse-temurin:26-jre-noble</jib-maven-plugin.image>
+        <jib-maven-plugin.image>eclipse-temurin:25-jre-noble</jib-maven-plugin.image>
         <jib-maven-plugin.version>3.4.0</jib-maven-plugin.version>
         <lifecycle-mapping.version>1.0.0</lifecycle-mapping.version>
         <mapstruct.version>1.6.3</mapstruct.version>
@@ -55,7 +63,7 @@
         <maven-site-plugin.version>3.12.1</maven-site-plugin.version>
         <maven-surefire-plugin.version>3.5.5</maven-surefire-plugin.version>
         <maven-war-plugin.version>3.4.0</maven-war-plugin.version>
-        <modernizer-maven-plugin.version>2.7.0</modernizer-maven-plugin.version>
+        <modernizer-maven-plugin.version>3.4.0</modernizer-maven-plugin.version>
         <nohttp-checkstyle.version>0.0.11</nohttp-checkstyle.version>
         <profile.api-docs/>
         <profile.e2e/>
@@ -69,23 +77,9 @@
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <dependency>
                 <groupId>org.springframework.cloud</groupId>
                 <artifactId>spring-cloud-dependencies</artifactId>
                 <version>${spring-cloud.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <dependency>
-                <groupId>io.mongock</groupId>
-                <artifactId>mongock-bom</artifactId>
-                <version>${mongock.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -97,9 +91,9 @@
                 <scope>import</scope>
             </dependency>
             <dependency>
-                <groupId>org.springdoc</groupId>
-                <artifactId>springdoc-openapi-bom</artifactId>
-                <version>${springdoc.version}</version>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -123,8 +117,12 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-loader-tools</artifactId>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjrt</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjweaver</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -161,6 +159,16 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webflux-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webtestclient</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-thymeleaf</artifactId>
         </dependency>
         <dependency>
@@ -184,6 +192,7 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webflux-api</artifactId>
+            <version>${springdoc.version}</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
@@ -220,25 +229,14 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>io.dropwizard.metrics</groupId>
-            <artifactId>metrics-core</artifactId>
-        </dependency>
-        <dependency>
             <!-- fix https://github.com/jhipster/generator-jhipster/issues/21359 -->
             <groupId>io.micrometer</groupId>
             <artifactId>context-propagation</artifactId>
+            <version>${micrometer-context-propagation.version}</version>
         </dependency>
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.mongock</groupId>
-            <artifactId>mongock-springboot-v3</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.mongock</groupId>
-            <artifactId>mongodb-springdata-v4-driver</artifactId>
         </dependency>
         <dependency>
             <groupId>io.netty</groupId>
@@ -297,7 +295,7 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-gateway</artifactId>
+            <artifactId>spring-cloud-starter-gateway-server-webflux</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.cloud</groupId>
@@ -322,17 +320,17 @@
         </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>kafka</artifactId>
+            <artifactId>testcontainers-kafka</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>mongodb</artifactId>
+            <artifactId>testcontainers-mongodb</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -466,7 +464,7 @@
                             </platforms>
                         </from>
                         <to>
-                            <image>${build.finalName}:${project.version}</image>
+                            <image>${project.build.finalName}:${project.version}</image>
                         </to>
                         <container>
                             <entrypoint>
@@ -614,8 +612,8 @@
                                 <version>[${maven.version},)</version>
                             </requireMavenVersion>
                             <requireJavaVersion>
-                                <message>You are running an incompatible version of Java. JHipster supports JDK ${java.version}.</message>
-                                <version>[17,27)</version>
+                                <message>You are running an incompatible version of Java. This build requires JDK 25 or 26.</message>
+                                <version>[25,27)</version>
                             </requireJavaVersion>
                         </rules>
                     </configuration>
@@ -635,7 +633,7 @@
                             <include>**/*IT*</include>
                             <include>**/*IntTest*</include>
                         </includes>
-                        <argLine>@{argLine} -XX:+AllowRedefinitionToAddDeleteMethods -Dspring.profiles.active=${profile.test}</argLine>
+                        <argLine>@{argLine} -XX:+AllowRedefinitionToAddDeleteMethods -Dreactor.blockhound.shaded.net.bytebuddy.experimental=true -Dnet.bytebuddy.experimental=true -Dspring.profiles.active=${profile.test}</argLine>
                     </configuration>
                     <executions>
                         <execution>
@@ -720,7 +718,7 @@
                             <exclude>**/*IT*</exclude>
                             <exclude>**/*IntTest*</exclude>
                         </excludes>
-                        <argLine>@{argLine} -XX:+AllowRedefinitionToAddDeleteMethods</argLine>
+                        <argLine>@{argLine} -XX:+AllowRedefinitionToAddDeleteMethods -Dreactor.blockhound.shaded.net.bytebuddy.experimental=true -Dnet.bytebuddy.experimental=true</argLine>
                     </configuration>
                 </plugin>
                 <plugin>

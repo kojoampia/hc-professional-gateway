@@ -20,6 +20,10 @@ spring:
   config:
     activate:
       on-profile: '!api-docs'
+  threads:
+    virtual:
+      enabled: true
+
 springdoc:
   api-docs:
     enabled: false
@@ -97,19 +101,15 @@ management:
         autotime:
           enabled: true
 
-mongock:
-  migration-scan-package:
-    - net.jojoaddison.config.dbmigrations
-
 spring:
   application:
-    name: hcProfessionalGateway
+    name: HC-Professional-Gateway
   cloud:
     consul:
       discovery:
         healthCheckPath: /management/health
-        instanceId: hcprofessionalgateway:${spring.application.instance-id:${random.value}}
-        service-name: hcprofessionalgateway
+        instanceId: hc-professional-gateway:${spring.application.instance-id:${random.value}}
+        service-name: hc-professional-gateway
       config:
         watch:
           enabled: false
@@ -133,7 +133,7 @@ spring:
         pool:
           max-connections: 1000
     function:
-      definition: kafkaConsumer;kafkaProducer
+      definition: kafkaConsumer
     stream:
       kafka:
         binder:
@@ -163,7 +163,7 @@ spring:
         # Uncomment to activate TLS for the dev profile
         #- tls
   jmx:
-    enabled: false
+    enabled: true
   messages:
     basename: i18n/messages
   main:
@@ -233,7 +233,6 @@ jhipster:
     contact-email:
     license: unlicensed
     license-url:
-  security:
 # ===================================================================
 # Application specific properties
 # Add your own application properties here, see the ApplicationProperties class

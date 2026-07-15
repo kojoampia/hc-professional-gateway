@@ -4,7 +4,6 @@ import java.util.*;
 import net.jojoaddison.domain.Authority;
 import net.jojoaddison.domain.User;
 import net.jojoaddison.repository.UserRepository;
-import org.hibernate.validator.internal.constraintvalidators.hv.EmailValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -32,7 +31,7 @@ public class DomainUserDetailsService implements ReactiveUserDetailsService {
     public Mono<UserDetails> findByUsername(final String login) {
         log.debug("Authenticating {}", login);
 
-        if (new EmailValidator().isValid(login, null)) {
+        if (isEmailAddress(login)) {
             return userRepository
                 .findOneByEmailIgnoreCase(login)
                 .switchIfEmpty(Mono.error(new UsernameNotFoundException("User with email " + login + " was not found in the database")))
@@ -44,6 +43,10 @@ public class DomainUserDetailsService implements ReactiveUserDetailsService {
             .findOneByLogin(lowercaseLogin)
             .switchIfEmpty(Mono.error(new UsernameNotFoundException("User " + lowercaseLogin + " was not found in the database")))
             .map(user -> createSpringSecurityUser(lowercaseLogin, user));
+    }
+
+    private boolean isEmailAddress(String login) {
+        return login != null && login.indexOf('@') > 0 && login.indexOf('@') == login.lastIndexOf('@');
     }
 
     private org.springframework.security.core.userdetails.User createSpringSecurityUser(String lowercaseLogin, User user) {

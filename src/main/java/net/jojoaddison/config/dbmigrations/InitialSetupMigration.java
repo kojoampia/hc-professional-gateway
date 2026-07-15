@@ -1,20 +1,22 @@
 package net.jojoaddison.config.dbmigrations;
 
-import io.mongock.api.annotations.ChangeUnit;
-import io.mongock.api.annotations.Execution;
-import io.mongock.api.annotations.RollbackExecution;
 import java.time.Instant;
 import net.jojoaddison.config.Constants;
 import net.jojoaddison.domain.Authority;
 import net.jojoaddison.domain.User;
 import net.jojoaddison.security.AuthoritiesConstants;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.stereotype.Component;
 
 /**
- * Creates the initial database setup.
+ * Seeds the initial database state when it is missing.
  */
-@ChangeUnit(id = "users-initialization", order = "001")
-public class InitialSetupMigration {
+@Component
+public class InitialSetupMigration implements ApplicationRunner {
 
     private final MongoTemplate template;
 
@@ -22,17 +24,13 @@ public class InitialSetupMigration {
         this.template = template;
     }
 
-    @Execution
-    public void changeSet() {
-        Authority userAuthority = createUserAuthority();
-        userAuthority = template.save(userAuthority);
-        Authority adminAuthority = createAdminAuthority();
-        adminAuthority = template.save(adminAuthority);
-        addUsers(userAuthority, adminAuthority);
+    @Override
+    public void run(ApplicationArguments args) {
+        Authority userAuthority = saveAuthorityIfMissing(createUserAuthority());
+        Authority adminAuthority = saveAuthorityIfMissing(createAdminAuthority());
+        saveUserIfMissing(createUser(userAuthority), "user");
+        saveUserIfMissing(createAdmin(adminAuthority, userAuthority), "admin");
     }
-
-    @RollbackExecution
-    public void rollback() {}
 
     private Authority createAuthority(String authority) {
         Authority adminAuthority = new Authority();
@@ -50,11 +48,19 @@ public class InitialSetupMigration {
         return userAuthority;
     }
 
-    private void addUsers(Authority userAuthority, Authority adminAuthority) {
-        User user = createUser(userAuthority);
-        template.save(user);
-        User admin = createAdmin(adminAuthority, userAuthority);
-        template.save(admin);
+    private Authority saveAuthorityIfMissing(Authority authority) {
+        Authority existingAuthority = template.findById(authority.getName(), Authority.class);
+        if (existingAuthority != null) {
+            return existingAuthority;
+        }
+        return template.save(authority);
+    }
+
+    private void saveUserIfMissing(User user, String login) {
+        Query query = Query.query(Criteria.where("login").is(login));
+        if (!template.exists(query, User.class)) {
+            template.save(user);
+        }
     }
 
     private User createUser(Authority userAuthority) {

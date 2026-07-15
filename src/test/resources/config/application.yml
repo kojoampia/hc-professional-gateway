@@ -13,15 +13,6 @@
 # http://docs.spring.io/spring-boot/docs/current/reference/html/common-application-properties.html
 # ===================================================================
 
-mongock:
-  migration-scan-package:
-    - net.jojoaddison.config.dbmigrations
-  mongo-db:
-    read-concern: local
-    write-concern:
-      journal: false
-      w: 'majority'
-
 spring:
   application:
     name: hcProfessionalGateway
@@ -54,9 +45,6 @@ spring:
         kafkaProducer-out-0:
           content-type: text/plain
           group: hc-professional-gateway
-  jackson:
-    serialization:
-      write-durations-as-timestamps: false
   mail:
     host: localhost
   main:

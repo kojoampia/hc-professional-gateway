@@ -34,7 +34,12 @@ public class TestContainersSpringContextCustomizerFactory implements ContextCust
                         beanFactory.registerSingleton(MongoDbTestContainer.class.getName(), mongoDbBean);
                         // ((DefaultListableBeanFactory)beanFactory).registerDisposableBean(MongoDbTestContainer.class.getName(), mongoDbBean);
                     }
-                    testValues = testValues.and("spring.data.mongodb.uri=" + mongoDbBean.getMongoDBContainer().getReplicaSetUrl());
+                    String mongoDbUrl = mongoDbBean.getMongoDBContainer().getReplicaSetUrl();
+                    testValues = testValues
+                        .and("spring.data.mongodb.uri=" + mongoDbUrl)
+                        .and("spring.data.mongodb.database=hcProfessionalGateway")
+                        .and("spring.mongodb.uri=" + mongoDbUrl)
+                        .and("spring.mongodb.database=hcProfessionalGateway");
                 }
                 testValues.applyTo(context);
             }
