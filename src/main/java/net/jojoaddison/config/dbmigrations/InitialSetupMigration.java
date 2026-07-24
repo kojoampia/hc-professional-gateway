@@ -22,7 +22,7 @@ public class InitialSetupMigration implements ApplicationRunner {
 
     private final MongoTemplate template;
     private final PasswordEncoder passwordEncoder;
-    private static org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(InitialSetupMigration.class);
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(InitialSetupMigration.class);
 
     public InitialSetupMigration(MongoTemplate template, PasswordEncoder passwordEncoder) {
         this.template = template;
@@ -30,7 +30,7 @@ public class InitialSetupMigration implements ApplicationRunner {
         cleanup();
     }
 
-    public void cleanup() {
+    public final void cleanup() {
         template.dropCollection(Authority.class);
         template.dropCollection(User.class);
         logger.info("Dropped Authority and User collections");
@@ -110,7 +110,7 @@ public class InitialSetupMigration implements ApplicationRunner {
         User userUser = new User();
         String login = "user";
         String password = (Character.toUpperCase(login.charAt(0)) + login.substring(1) + "@");
-        for (int i = 0; i < login.length(); i++) {
+        for (int i = 1; i < login.length(); i++) {
             password += i;
         }
         logger.info("Creating user with login: {} and password: {}", login, password);
@@ -132,7 +132,7 @@ public class InitialSetupMigration implements ApplicationRunner {
         User adminUser = new User();
         String login = "admin";
         String password = (Character.toUpperCase(login.charAt(0)) + login.substring(1) + "@");
-        for (int i = 0; i < login.length(); i++) {
+        for (int i = 1; i < login.length(); i++) {
             password += i;
         }
         logger.info("Creating admin with login: {} and password: {}", login, password);
