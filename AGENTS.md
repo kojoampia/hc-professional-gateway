@@ -1,74 +1,59 @@
-# Project Overview
+# AGENTS.md — hcProfessionalGateway
 
-## Code Quality and Style
+Guidance for AI agents working in this repository. Describes the code as it actually is.
 
-- Follow SOLID principles and clean code practices.
-- Use consistent naming conventions and code formatting.
-- Implement comprehensive unit and integration tests using JUnit 5 and Mockito.
-- Ensure proper documentation of code and APIs using JavaDoc and Swagger/OpenAPI.
-- No null pointer deferences; use Optional where applicable.
-- Handle exceptions gracefully and provide meaningful error messages.
-- Use Lombok for boilerplate code reduction (getters, setters, constructors).
-- Adhere to RESTful API design principles for all endpoints.
-- Use Liquibase for database migrations and version control.
-- Implement logging using SLF4J and Logback for all critical operations and exceptions.
-- Follow resource leak prevention best practices, especially in file handling and database connections.
+## What this repository is
 
-## Architecture and Design
+A JHipster 8.3.0–generated **reactive API gateway** for the Health Connect microservice architecture. It fronts the domain microservices (notably `professionalService` in the sibling `api/` repo) and owns **user management and JWT authentication** for the platform.
 
-- Use a layered architecture (Controller, Service, Repository) for separation of concerns.
-- Implement domain-driven design principles for modeling the healthcare workforce and related entities.
-- Dependency injection should be used for all services and repositories to promote testability and maintainability.
-- Use Kafka for asynchronous communication between services, especially for telemetry data and alerts.
-- Integrate MinIO for document storage, ensuring secure and efficient handling of professional and vendor documents
-- No static initialization blocks; use dependency injection for all configurations and services.
-- Implement a robust error handling mechanism using `@ControllerAdvice` to return RFC 7807 compliant error responses for all exceptions.
-- Immutable objects for data transfer objects (DTOs) and domain models where appropriate to ensure thread safety and maintainability.
+## Actual technology stack
 
-## Security Considerations
+- Java 25, Spring Boot 4.1 (`spring-boot-starter-parent` 4.1.0), Maven (`./mvnw`)
+- **Reactive end-to-end**: Spring WebFlux + Spring Cloud Gateway (`spring-cloud-starter-gateway-server-webflux`). Use `Mono`/`Flux`; do not copy imperative Spring MVC patterns from the `api/` repo into this repo.
+- **MongoDB** (`spring-boot-starter-data-mongodb-reactive`; the blocking driver is also on the classpath for the startup seeder). There is **no PostgreSQL, no JPA, no Liquibase, no Mongock** — ignore any doc that claims otherwise.
+- Consul for service discovery and config (`spring-cloud-starter-consul-*`). **The app refuses to start if Consul is not reachable at `http://localhost:8500`.**
+- JWT authentication (`security/jwt/`), issued by this gateway and validated by downstream services.
+- Kafka via Spring Cloud Stream binder (`broker/KafkaConsumer`, `broker/KafkaProducer`).
+- springdoc-openapi (WebFlux variant) for API docs.
+- **No Lombok** — JHipster-style explicit getters/setters/builders.
 
-- Implement authentication and authorization using Spring Security, with role-based access control for all stakeholders (Professionals, Vendors, Admins).
-- Ensure all sensitive data (e.g., personal information, documents) is encrypted at rest and in transit.
-- Use secure password storage practices (e.g., bcrypt) for any user credentials.
-- Implement input validation and sanitization to prevent common vulnerabilities such as SQL injection and cross-site scripting (XSS).
-- Ensure proper CORS configuration for the Angular frontend to securely interact with the backend APIs.
-- Regularly update dependencies to mitigate known security vulnerabilities.
-- Implement rate limiting and monitoring to prevent abuse of the APIs and ensure system stability under load.
-- Use HTTPS for all communications between the frontend and backend services to ensure data confidentiality and integrity.
-- Ensure logs do not contain sensitive data or PII information and are properly secured to prevent unauthorized access.
-- Implement comprehensive testing for security vulnerabilities, including penetration testing and vulnerability scanning as part of the development lifecycle.
-- Ensure compliance with relevant data protection regulations (e.g., GDPR, HIPAA) in the handling of personal and health-related data.
-- Use secure coding practices and conduct regular code reviews to identify and mitigate potential security issues early in the development process.
-- Implement a secure document upload mechanism that validates file types, sizes, and content to prevent malicious uploads and ensure the integrity of stored documents.
+Server port: **5505** (`application-dev.yml` / `application-prod.yml`). The Angular frontend (sibling `web/` repo) proxies to this port in dev.
 
-## Performance Optimization
+## Code layout (`src/main/java/net/jojoaddison`)
 
-- Use pagination and filtering for API endpoints that return large datasets to improve response times and reduce memory usage.
-- Implement caching strategies (e.g., using Spring Cache) for frequently accessed data to reduce database load and improve response times.
-- Optimize database queries using indexing and proper query design to ensure efficient data retrieval and manipulation.
-- Use asynchronous processing for long-running tasks (e.g., document uploads, complex matching algorithms) to improve responsiveness and user experience.
-- Monitor application performance using tools like Spring Boot Actuator and implement necessary optimizations based on observed metrics and bottlenecks.
-- Implement connection pooling for database connections to improve performance and resource management.
-- Use efficient data structures and algorithms in the implementation of the matching service and threshold engine to ensure optimal performance under load.
-- Regularly profile the application to identify and address performance bottlenecks, especially in critical paths such as the matching service and Kafka consumer.
-- Ensure that the application can scale horizontally by designing stateless services and using appropriate load balancing strategies to handle increased traffic and workload effectively.
+- `domain/` — only `User`, `Authority`, `AbstractAuditingEntity`. Business entities live in the microservices, not here.
+- `web/rest/` — account/user/auth endpoints (`AccountResource`, `AuthenticateController`, `UserResource`, `PublicUserResource`, `AuthorityResource`), `GatewayResource` (route introspection), Kafka test resource.
+- `security/`, `security/jwt/` — Spring Security (reactive) + JWT token provider/validation.
+- `service/`, `service/dto/`, `service/mapper/` — user service, DTOs, and mappers.
+- `service/ProfileGateway.java` — Feign client targeting service id `hcprofessionalservice`; check the target service's actual Consul registration name before relying on it.
+- `config/dbmigrations/InitialSetupMigration.java` — **the only "migration" mechanism**: an `ApplicationRunner` `@Component` that seeds `Authority` and default `User` documents at startup using the blocking `MongoTemplate`, idempotently (`saveUserIfMissing`). Default passwords are derived from the login. There is no versioned-migration framework; schema is implicit in the documents.
+- `broker/` — Kafka producer/consumer.
+- `web/filter/` — reactive gateway filters.
 
-## Technology Stack
+## Commands
 
-- Java 25
-- Spring Boot 4
-- Spring Web, Spring Data JPA, Spring Security, Spring Kafka, Spring Cloud AWS
-- PostgreSQL
-- MinIO for document storage
-- Angular 19+ for the frontend
-- Docker and Docker Compose for containerization
-- Liquibase for database migrations
-- JUnit 5 and Mockito for testing
-- SLF4J and Logback for logging
-- Swagger/OpenAPI for API documentation
-- Maven for build and dependency management
-- NPM for frontend package management
-- Nginx for serving the Angular frontend in production
-- Testcontainers for integration testing with PostgreSQL and MinIO
-- Git for version control and collaboration
-- GitHub Actions for CI/CD pipelines to automate testing and deployment processes.
+```bash
+npm run services:up        # start Consul + MongoDB + Kafka (docker compose -f src/main/docker/services.yml up --wait)
+npm run docker:db:up       # MongoDB only
+./mvnw                     # run dev profile (needs Consul + MongoDB)
+./run-local.sh <args>      # wrapper: exports SPRING_MONGODB_URI from .env.local (copy .env.local.example), then runs ./mvnw
+./mvnw verify              # full build + unit + integration tests
+./mvnw test -Dtest=SomeTest          # single unit test
+./mvnw verify -Dit.test=SomeResourceIT   # single integration test
+./mvnw -Pprod clean verify # production jar → java -jar target/*.jar
+./mvnw checkstyle:check    # style gate (checkstyle.xml, includes nohttp)
+npm run lint / lint:fix    # ESLint (tooling/config files)
+npm run prettier:check / prettier:format
+```
+
+## Testing
+
+- JUnit 5. Integration tests (`*IT`) are annotated with the repo's `@IntegrationTest` and use **Testcontainers** for MongoDB and Kafka — Docker must be running for `./mvnw verify`.
+- Reactive endpoints are tested with `WebTestClient`.
+
+## Conventions
+
+- Preserve JHipster generator needles (`// jhipster-needle-*`) — the generator uses them as insertion points.
+- Prettier formats Java too (via the JHipster prettier plugin config in `package.json`/`.prettierrc`) — run `npm run prettier:format` after editing.
+- Configuration lives in `src/main/resources/config/application*.yml`; Consul central config templates in `src/main/docker/central-server-config/`.
+- `src/main/docker/` has compose files for consul, mongodb (single + cluster), kafka, monitoring (Prometheus/Grafana), zipkin, sonar; `jib/` for container builds.
