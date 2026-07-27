@@ -47,6 +47,19 @@ public class InitialSetupMigration implements ApplicationRunner {
         saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createAngelAuthority()), "angel"), "angel");
         saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createCarerAuthority()), "carer"), "carer");
         saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createParamedicAuthority()), "paramedic"), "paramedic");
+        saveUserIfMissing(
+            createProfessional(saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.PHARMACIST)), "pharmacist"),
+            "pharmacist"
+        );
+        saveUserIfMissing(
+            createProfessional(saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.THERAPIST)), "therapist"),
+            "therapist"
+        );
+        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.CHEMIST)), "chemist"), "chemist");
+        saveUserIfMissing(
+            createProfessional(saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.TECHNICIAN)), "technician"),
+            "technician"
+        );
         logger.info("Initial setup migration completed successfully");
     }
 

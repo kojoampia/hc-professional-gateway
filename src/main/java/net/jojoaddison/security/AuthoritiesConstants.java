@@ -41,6 +41,8 @@ public final class AuthoritiesConstants {
 
     public static final String PHARMACIST = "ROLE_PHARMACIST";
 
+    public static final String THERAPIST = "ROLE_THERAPIST";
+
     public static final String CHEMIST = "ROLE_CHEMIST";
 
     public static final String TECHNICIAN = "ROLE_TECHNICIAN";
