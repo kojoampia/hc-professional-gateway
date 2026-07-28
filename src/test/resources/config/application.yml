@@ -45,6 +45,9 @@ spring:
         kafkaProducer-out-0:
           content-type: text/plain
           group: hc-professional-gateway
+        registrationEvents-out-0:
+          destination: hc.professional.registration
+          content-type: application/json
   mail:
     host: localhost
   main:

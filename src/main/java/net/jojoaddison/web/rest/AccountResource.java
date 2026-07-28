@@ -40,10 +40,18 @@ public class AccountResource {
 
     private final MailService mailService;
 
-    public AccountResource(UserRepository userRepository, UserService userService, MailService mailService) {
+    private final net.jojoaddison.broker.RegistrationEventPublisher registrationEventPublisher;
+
+    public AccountResource(
+        UserRepository userRepository,
+        UserService userService,
+        MailService mailService,
+        net.jojoaddison.broker.RegistrationEventPublisher registrationEventPublisher
+    ) {
         this.userRepository = userRepository;
         this.userService = userService;
         this.mailService = mailService;
+        this.registrationEventPublisher = registrationEventPublisher;
     }
 
     /**
@@ -60,7 +68,21 @@ public class AccountResource {
         if (isPasswordLengthInvalid(managedUserVM.getPassword())) {
             throw new InvalidPasswordException();
         }
-        return userService.registerUser(managedUserVM, managedUserVM.getPassword()).doOnSuccess(mailService::sendActivationEmail).then();
+        return userService
+            .registerUser(managedUserVM, managedUserVM.getPassword())
+            .doOnSuccess(mailService::sendActivationEmail)
+            .doOnSuccess(
+                user ->
+                    registrationEventPublisher.publishRegistrationCreated(
+                        user.getId(),
+                        user.getLogin(),
+                        user.getEmail(),
+                        user.getLangKey(),
+                        net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_SELF_SERVICE,
+                        user.getLogin()
+                    )
+            )
+            .then();
     }
 
     /**

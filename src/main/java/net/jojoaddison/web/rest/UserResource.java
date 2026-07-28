@@ -91,10 +91,18 @@ public class UserResource {
 
     private final MailService mailService;
 
-    public UserResource(UserService userService, UserRepository userRepository, MailService mailService) {
+    private final net.jojoaddison.broker.RegistrationEventPublisher registrationEventPublisher;
+
+    public UserResource(
+        UserService userService,
+        UserRepository userRepository,
+        MailService mailService,
+        net.jojoaddison.broker.RegistrationEventPublisher registrationEventPublisher
+    ) {
         this.userService = userService;
         this.userRepository = userRepository;
         this.mailService = mailService;
+        this.registrationEventPublisher = registrationEventPublisher;
     }
 
     /**
@@ -134,6 +142,23 @@ public class UserResource {
                 return userService.createUser(userDTO);
             })
             .doOnSuccess(mailService::sendCreationEmail)
+            .flatMap(
+                user ->
+                    net.jojoaddison.security.SecurityUtils.getCurrentUserLogin()
+                        .defaultIfEmpty("system")
+                        .doOnNext(
+                            actor ->
+                                registrationEventPublisher.publishRegistrationCreated(
+                                    user.getId(),
+                                    user.getLogin(),
+                                    user.getEmail(),
+                                    user.getLangKey(),
+                                    net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_INVITATION,
+                                    actor
+                                )
+                        )
+                        .thenReturn(user)
+            )
             .map(user -> {
                 try {
                     return ResponseEntity.created(new URI("/api/admin/users/" + user.getLogin()))

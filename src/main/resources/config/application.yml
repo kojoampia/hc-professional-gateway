@@ -151,6 +151,9 @@ spring:
         kafkaProducer-out-0:
           content-type: text/plain
           group: hc-professional-gateway
+        registrationEvents-out-0:
+          destination: hc.professional.registration
+          content-type: application/json
   profiles:
     # The commented value for `active` can be replaced with valid Spring profiles to load.
     # Otherwise, it will be filled in by maven when building the JAR file
