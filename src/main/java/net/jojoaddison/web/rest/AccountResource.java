@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * REST controller for managing the current user's account.
@@ -71,16 +72,20 @@ public class AccountResource {
         return userService
             .registerUser(managedUserVM, managedUserVM.getPassword())
             .doOnSuccess(mailService::sendActivationEmail)
-            .doOnSuccess(
+            .flatMap(
+                // StreamBridge does blocking I/O (binder init) - keep it off the event loop
                 user ->
-                    registrationEventPublisher.publishRegistrationCreated(
-                        user.getId(),
-                        user.getLogin(),
-                        user.getEmail(),
-                        user.getLangKey(),
-                        net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_SELF_SERVICE,
-                        user.getLogin()
-                    )
+                    Mono.fromRunnable(
+                        () ->
+                            registrationEventPublisher.publishRegistrationCreated(
+                                user.getId(),
+                                user.getLogin(),
+                                user.getEmail(),
+                                user.getLangKey(),
+                                net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_SELF_SERVICE,
+                                user.getLogin()
+                            )
+                    ).subscribeOn(Schedulers.boundedElastic())
             )
             .then();
     }

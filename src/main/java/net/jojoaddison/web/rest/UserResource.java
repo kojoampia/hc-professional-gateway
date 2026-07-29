@@ -142,23 +142,25 @@ public class UserResource {
                 return userService.createUser(userDTO);
             })
             .doOnSuccess(mailService::sendCreationEmail)
-            .flatMap(
-                user ->
-                    net.jojoaddison.security.SecurityUtils.getCurrentUserLogin()
-                        .defaultIfEmpty("system")
-                        .doOnNext(
-                            actor ->
-                                registrationEventPublisher.publishRegistrationCreated(
-                                    user.getId(),
-                                    user.getLogin(),
-                                    user.getEmail(),
-                                    user.getLangKey(),
-                                    net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_INVITATION,
-                                    actor
-                                )
-                        )
-                        .thenReturn(user)
-            )
+            .flatMap(user ->
+                net.jojoaddison.security.SecurityUtils.getCurrentUserLogin()
+                    .defaultIfEmpty("system")
+                    .flatMap(
+                        // StreamBridge does blocking I/O (binder init) - keep it off the event loop
+                        actor ->
+                            reactor.core.publisher.Mono.fromRunnable(
+                                () ->
+                                    registrationEventPublisher.publishRegistrationCreated(
+                                        user.getId(),
+                                        user.getLogin(),
+                                        user.getEmail(),
+                                        user.getLangKey(),
+                                        net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_INVITATION,
+                                        actor
+                                    )
+                            ).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                    )
+                    .thenReturn(user))
             .map(user -> {
                 try {
                     return ResponseEntity.created(new URI("/api/admin/users/" + user.getLogin()))
