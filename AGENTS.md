@@ -26,9 +26,23 @@ Server port: **5505** (`application-dev.yml` / `application-prod.yml`). The Angu
 - `security/`, `security/jwt/` — Spring Security (reactive) + JWT token provider/validation.
 - `service/`, `service/dto/`, `service/mapper/` — user service, DTOs, and mappers.
 - `service/ProfileGateway.java` — Feign client targeting service id `hcprofessionalservice`; check the target service's actual Consul registration name before relying on it.
-- `config/dbmigrations/InitialSetupMigration.java` — **the only "migration" mechanism**: an `ApplicationRunner` `@Component` that seeds `Authority` and default `User` documents at startup using the blocking `MongoTemplate`, idempotently (`saveUserIfMissing`). Default passwords are derived from the login. There is no versioned-migration framework; schema is implicit in the documents.
-- `broker/` — Kafka producer/consumer.
+- `config/dbmigrations/InitialSetupMigration.java` — **the only "migration" mechanism**: an `ApplicationRunner` `@Component` that seeds `Authority` and default `User` documents at startup using the blocking `MongoTemplate`, idempotently (`saveUserIfMissing`). It now seeds **all nine clinical authorities** with a demo user each (doctor, nurse, angel, carer, paramedic, pharmacist, therapist, chemist, technician) alongside `user`/`admin`. Default passwords are derived from the login — change the admin password on any real deployment. There is no versioned-migration framework; schema is implicit in the documents.
+- `broker/` — Kafka producer/consumer scaffold plus `RegistrationEventPublisher` (see § Domain events).
 - `web/filter/` — reactive gateway filters.
+
+## Authorities — a cross-repo invariant
+
+`security/AuthoritiesConstants` declares the platform's authorities, including the **nine clinical roles**: `ROLE_DOCTOR`, `NURSE`, `PARAMEDIC`, `PHARMACIST`, `THERAPIST`, `CARER`, `ANGEL`, `CHEMIST`, `TECHNICIAN`.
+
+The same set is duplicated in `api/security/AuthoritiesConstants` and in web's `config/authority.constants.ts` + `health-connect/authority-role.ts`, and it **drifts silently** — adding a role here without the other two repos produces a token whose role the microservice ignores and the UI can't badge. `api/` additionally enforces a mutation matrix (`CLINICAL_MUTATION`: admin, doctor, nurse, paramedic, pharmacist, therapist mutate; carer/angel/chemist/technician are read-only in v1); this gateway does not, so authorising a role here is not the same as letting it write.
+
+This gateway is the **only** JWT issuer; downstream services validate. `../professional-onboarding-workflow.md` (at the workspace root, since it spans all three repos) is the spec for the role model; Java comments in this repo cite it by bare filename.
+
+## Domain events
+
+`broker/RegistrationEventPublisher` publishes `registration.created` to `hc.professional.registration` via `StreamBridge`, for the admin portal — from **both** the self-service registration path and the administrator-created invitation path in `UserResource`. Envelope is `eventId`/`eventType`/`occurredAt`/`source`/`actor`/`payload`, keyed by `accountId`.
+
+Two rules: **publishing must never break the registration path** (failures are logged, not propagated — keep the try/catch), and the payload carries identifiers plus `login`/`email`/`langKey` only. `api/` publishes `entity.created` and `compliance.alert` to a separate topic with the same envelope shape; keep the two in step. Covered by `RegistrationEventPublisherTest`.
 
 ## Commands
 
@@ -44,7 +58,16 @@ npm run docker:db:up       # MongoDB only
 ./mvnw checkstyle:check    # style gate (checkstyle.xml, includes nohttp)
 npm run lint / lint:fix    # ESLint (tooling/config files)
 npm run prettier:check / prettier:format
+./build-image.sh [version] # WP8: Jib production image hc-professional-gateway; PUSH=1 to push to the registry
 ```
+
+### Build toolchain gotchas
+
+The pom targets **release 25**, but the build runs on **JDK 26** (`build-image.sh` pins `JAVA_HOME=/usr/lib/jvm/jdk-26-oracle-x64` when present).
+
+**Untested caveat:** `jib-maven-plugin.version` here is still `3.4.0` with no explicit `<mainClass>` in the jib `<container>` block. The sibling `api/` repo hit a wall on exactly that — Jib 3.4.1's bundled ASM cannot read Java 25 class files (major 69) — and fixed it by moving to 3.4.6 and setting `<mainClass>${start-class}</mainClass>` in the jib container config. If `./build-image.sh` fails with an ASM/class-reading error, apply the same two changes; don't assume the version difference is deliberate.
+
+Deployment of the whole three-repo stack lives in `../deploy/` at the workspace root (`docker-compose.professional.yml`, runbook in its `README.md`), not here. It invokes this repo's `build-image.sh` as `(cd ../gateway && ./build-image.sh <version>)`. Note that the gateway and `api/` **must share one `JWT_BASE64_SECRET`** — their in-repo prod defaults differ, so a deployed stack never works until it is set; the deployed value lives in the untracked `../deploy/.env`.
 
 ## Testing
 
