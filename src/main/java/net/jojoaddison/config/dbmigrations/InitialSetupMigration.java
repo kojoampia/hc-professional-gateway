@@ -10,12 +10,15 @@ import net.jojoaddison.security.AuthoritiesConstants;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
+import tech.jhipster.config.JHipsterConstants;
 
 /**
  * Seeds the initial database state when it is missing.
@@ -48,16 +51,33 @@ public class InitialSetupMigration implements ApplicationRunner {
      */
     private final String configuredAdminPassword;
 
+    /**
+     * Whether to seed the demo accounts — {@code user} and one professional per clinical role.
+     * <p>
+     * Every one of them has a password derived from its own login ({@code doctor} /
+     * {@code Doctor@12345}), computable by anyone reading this file, so they have no business on a
+     * deployment the public can reach. They are useful for local work and for exercising the role
+     * matrix, so they are seeded everywhere except production.
+     * <p>
+     * The predicate is <em>not production</em> rather than an allow-list of {@code dev} and
+     * {@code test}: this project's tests run under the profile {@code testdev} (see
+     * {@code <profile.test>} in pom.xml), which an allow-list would silently exclude — the accounts
+     * would vanish from the test context and take the role-matrix coverage with them.
+     */
+    private final boolean seedDemoAccounts;
+
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(InitialSetupMigration.class);
 
     public InitialSetupMigration(
         MongoTemplate template,
         PasswordEncoder passwordEncoder,
-        @Value("${gateway.admin-password:}") String configuredAdminPassword
+        @Value("${gateway.admin-password:}") String configuredAdminPassword,
+        Environment environment
     ) {
         this.template = template;
         this.passwordEncoder = passwordEncoder;
         this.configuredAdminPassword = configuredAdminPassword;
+        this.seedDemoAccounts = !environment.acceptsProfiles(Profiles.of(JHipsterConstants.SPRING_PROFILE_PRODUCTION));
     }
 
     @Override
@@ -79,11 +99,22 @@ public class InitialSetupMigration implements ApplicationRunner {
         Authority chemistAuthority = saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.CHEMIST));
         Authority technicianAuthority = saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.TECHNICIAN));
 
+        // The administrator is seeded in every profile: on an empty production database it is the
+        // only way in. Its password comes from GATEWAY_ADMIN_PASSWORD there, so unlike the demo
+        // accounts below it need not be public.
+        //
         // Suppliers, not values: the account is only built when it is actually missing, so the log
         // lines inside these factories describe something that happened. Passing the built User
         // eagerly meant every boot announced "Creating admin ..." for an account it then left alone.
-        saveUserIfMissing("user", () -> createUser(userAuthority));
         saveUserIfMissing("admin", () -> createAdmin(adminAuthority, userAuthority));
+
+        if (!seedDemoAccounts) {
+            logger.info("Demo accounts not seeded under the prod profile — their passwords are derived from their logins");
+            logger.info("Initial setup migration completed successfully");
+            return;
+        }
+
+        saveUserIfMissing("user", () -> createUser(userAuthority));
         saveUserIfMissing("doctor", () -> createProfessional(doctorAuthority, "doctor"));
         saveUserIfMissing("nurse", () -> createProfessional(nurseAuthority, "nurse"));
         saveUserIfMissing("angel", () -> createProfessional(angelAuthority, "angel"));

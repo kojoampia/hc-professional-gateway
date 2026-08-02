@@ -2,6 +2,7 @@ package net.jojoaddison.config.dbmigrations;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.domain.User;
 import net.jojoaddison.security.AuthoritiesConstants;
@@ -10,7 +11,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import tech.jhipster.config.JHipsterConstants;
 
 /**
  * The seeder runs on every start, so what matters is not that it seeds — the rest of the suite
@@ -118,4 +121,49 @@ class InitialSetupMigrationIT {
             .as("a clinical authority must be re-created even when its demo account already exists")
             .isNotNull();
     }
+
+    @Test
+    void underProdTheDemoAccountsAreNotSeededButTheAdministratorIs() {
+        // Built by hand against a prod Environment rather than by changing the context's profile,
+        // so this asserts the gate itself without disturbing the rest of the suite — which runs
+        // under `testdev` and legitimately expects the demo accounts to exist.
+        MockEnvironment prod = new MockEnvironment();
+        prod.setActiveProfiles(JHipsterConstants.SPRING_PROFILE_PRODUCTION);
+        InitialSetupMigration prodMigration = new InitialSetupMigration(template, passwordEncoder, "", prod);
+
+        for (String login : DEMO_LOGINS) {
+            template.remove(Query.query(Criteria.where("login").is(login)), User.class);
+        }
+        template.remove(Query.query(Criteria.where("login").is("admin")), User.class);
+
+        prodMigration.run(null);
+
+        for (String login : DEMO_LOGINS) {
+            assertThat(template.exists(Query.query(Criteria.where("login").is(login)), User.class))
+                .as("%s has a password derived from its login and must not be seeded in production", login)
+                .isFalse();
+        }
+        assertThat(template.exists(Query.query(Criteria.where("login").is("admin")), User.class))
+            .as("the administrator is the only way into an empty production database, so it must still be seeded")
+            .isTrue();
+
+        // Put the suite's expected state back: this class shares a context with the others.
+        migration.run(null);
+        for (String login : DEMO_LOGINS) {
+            assertThat(template.exists(Query.query(Criteria.where("login").is(login)), User.class)).isTrue();
+        }
+    }
+
+    private static final List<String> DEMO_LOGINS = List.of(
+        "user",
+        "doctor",
+        "nurse",
+        "angel",
+        "carer",
+        "paramedic",
+        "pharmacist",
+        "therapist",
+        "chemist",
+        "technician"
+    );
 }
