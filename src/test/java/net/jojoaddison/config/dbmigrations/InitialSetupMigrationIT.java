@@ -99,4 +99,23 @@ class InitialSetupMigrationIT {
             AuthoritiesConstants.TECHNICIAN
         );
     }
+
+    @Test
+    void anAuthorityIsRestoredEvenWhenItsDemoAccountAlreadyExists() {
+        // Authority seeding used to be nested inside the arguments to saveUserIfMissing. Now that
+        // user seeding is lazy, that nesting would have meant a role stopped being ensured the
+        // moment its demo user existed — which is exactly the state every deployment is in after
+        // its first boot. Deleting the authority and leaving the user in place reproduces it.
+        template.remove(Query.query(Criteria.where("_id").is(AuthoritiesConstants.DOCTOR)), net.jojoaddison.domain.Authority.class);
+        assertThat(template.findById(AuthoritiesConstants.DOCTOR, net.jojoaddison.domain.Authority.class)).isNull();
+        assertThat(template.exists(Query.query(Criteria.where("login").is("doctor")), User.class))
+            .as("the demo account must still be present for this to test what it claims")
+            .isTrue();
+
+        migration.run(null);
+
+        assertThat(template.findById(AuthoritiesConstants.DOCTOR, net.jojoaddison.domain.Authority.class))
+            .as("a clinical authority must be re-created even when its demo account already exists")
+            .isNotNull();
+    }
 }

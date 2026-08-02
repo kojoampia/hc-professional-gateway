@@ -2,6 +2,7 @@ package net.jojoaddison.config.dbmigrations;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.util.function.Supplier;
 import net.jojoaddison.config.Constants;
 import net.jojoaddison.domain.Authority;
 import net.jojoaddison.domain.User;
@@ -61,28 +62,37 @@ public class InitialSetupMigration implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        // Authorities first, and unconditionally. They are a cross-repo invariant (the nine clinical
+        // roles), so each must exist even when the demo account that would once have introduced it
+        // already does. They used to be created inside the arguments to saveUserIfMissing below;
+        // now that user seeding is lazy, leaving them nested there would mean a role silently
+        // stopped being ensured as soon as its demo user existed.
         Authority userAuthority = saveAuthorityIfMissing(createUserAuthority());
         Authority adminAuthority = saveAuthorityIfMissing(createAdminAuthority());
-        saveUserIfMissing(createUser(userAuthority), "user");
-        saveUserIfMissing(createAdmin(adminAuthority, userAuthority), "admin");
-        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createDoctorAuthority()), "doctor"), "doctor");
-        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createNurseAuthority()), "nurse"), "nurse");
-        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createAngelAuthority()), "angel"), "angel");
-        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createCarerAuthority()), "carer"), "carer");
-        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createParamedicAuthority()), "paramedic"), "paramedic");
-        saveUserIfMissing(
-            createProfessional(saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.PHARMACIST)), "pharmacist"),
-            "pharmacist"
-        );
-        saveUserIfMissing(
-            createProfessional(saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.THERAPIST)), "therapist"),
-            "therapist"
-        );
-        saveUserIfMissing(createProfessional(saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.CHEMIST)), "chemist"), "chemist");
-        saveUserIfMissing(
-            createProfessional(saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.TECHNICIAN)), "technician"),
-            "technician"
-        );
+        Authority doctorAuthority = saveAuthorityIfMissing(createDoctorAuthority());
+        Authority nurseAuthority = saveAuthorityIfMissing(createNurseAuthority());
+        Authority angelAuthority = saveAuthorityIfMissing(createAngelAuthority());
+        Authority carerAuthority = saveAuthorityIfMissing(createCarerAuthority());
+        Authority paramedicAuthority = saveAuthorityIfMissing(createParamedicAuthority());
+        Authority pharmacistAuthority = saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.PHARMACIST));
+        Authority therapistAuthority = saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.THERAPIST));
+        Authority chemistAuthority = saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.CHEMIST));
+        Authority technicianAuthority = saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.TECHNICIAN));
+
+        // Suppliers, not values: the account is only built when it is actually missing, so the log
+        // lines inside these factories describe something that happened. Passing the built User
+        // eagerly meant every boot announced "Creating admin ..." for an account it then left alone.
+        saveUserIfMissing("user", () -> createUser(userAuthority));
+        saveUserIfMissing("admin", () -> createAdmin(adminAuthority, userAuthority));
+        saveUserIfMissing("doctor", () -> createProfessional(doctorAuthority, "doctor"));
+        saveUserIfMissing("nurse", () -> createProfessional(nurseAuthority, "nurse"));
+        saveUserIfMissing("angel", () -> createProfessional(angelAuthority, "angel"));
+        saveUserIfMissing("carer", () -> createProfessional(carerAuthority, "carer"));
+        saveUserIfMissing("paramedic", () -> createProfessional(paramedicAuthority, "paramedic"));
+        saveUserIfMissing("pharmacist", () -> createProfessional(pharmacistAuthority, "pharmacist"));
+        saveUserIfMissing("therapist", () -> createProfessional(therapistAuthority, "therapist"));
+        saveUserIfMissing("chemist", () -> createProfessional(chemistAuthority, "chemist"));
+        saveUserIfMissing("technician", () -> createProfessional(technicianAuthority, "technician"));
         logger.info("Initial setup migration completed successfully");
     }
 
@@ -135,11 +145,17 @@ public class InitialSetupMigration implements ApplicationRunner {
         return template.save(authority);
     }
 
-    private void saveUserIfMissing(User user, String login) {
+    /**
+     * Seeds {@code login} only when no such account exists. The factory is not invoked otherwise, so
+     * an existing account is never rebuilt, re-encoded, or announced in the log.
+     */
+    private void saveUserIfMissing(String login, Supplier<User> factory) {
         Query query = Query.query(Criteria.where("login").is(login));
-        if (!template.exists(query, User.class)) {
-            template.save(user);
+        if (template.exists(query, User.class)) {
+            logger.debug("Account {} already exists — left unchanged", login);
+            return;
         }
+        template.save(factory.get());
     }
 
     /** {@code doctor} -> {@code Doctor@12345}. Public by construction — see createAdmin. */
