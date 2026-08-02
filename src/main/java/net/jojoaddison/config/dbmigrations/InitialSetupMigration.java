@@ -6,6 +6,7 @@ import net.jojoaddison.config.Constants;
 import net.jojoaddison.domain.Authority;
 import net.jojoaddison.domain.User;
 import net.jojoaddison.security.AuthoritiesConstants;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -13,27 +14,49 @@ import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /**
  * Seeds the initial database state when it is missing.
+ * <p>
+ * <strong>Idempotent, and it has to stay that way.</strong> This runs on every start, so anything
+ * it does destructively it does to live data. It previously opened by dropping the Authority and
+ * User collections from its own constructor, which meant every restart deleted every account: the
+ * administrator's rotated password reverted to the seeded default, and any clinician who had
+ * registered lost their credentials and authority grants while their onboarding application
+ * survived in professionalService, orphaned from a user that no longer existed. That drop also made
+ * the {@code saveUserIfMissing} / {@code saveAuthorityIfMissing} guards below unreachable — nothing
+ * is ever missing from a collection that was just emptied.
+ * <p>
+ * Those guards are now the whole mechanism: seed what is absent, touch nothing that exists.
  */
 @Component
 public class InitialSetupMigration implements ApplicationRunner {
 
     private final MongoTemplate template;
     private final PasswordEncoder passwordEncoder;
+
+    /**
+     * Administrator password for a database that has none yet, from {@code GATEWAY_ADMIN_PASSWORD}.
+     * <p>
+     * Blank — the default — falls back to a value derived from the login, which is fine for a
+     * developer and is published in this repository, so it must not be what a deployment relies on.
+     * Set it in production and the first administrator is created with a real secret instead of one
+     * anybody can compute from the source. It applies only when the account does not already exist;
+     * changing it later does not reset a password that has since been rotated through the UI.
+     */
+    private final String configuredAdminPassword;
+
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(InitialSetupMigration.class);
 
-    public InitialSetupMigration(MongoTemplate template, PasswordEncoder passwordEncoder) {
+    public InitialSetupMigration(
+        MongoTemplate template,
+        PasswordEncoder passwordEncoder,
+        @Value("${gateway.admin-password:}") String configuredAdminPassword
+    ) {
         this.template = template;
         this.passwordEncoder = passwordEncoder;
-        cleanup();
-    }
-
-    public final void cleanup() {
-        template.dropCollection(Authority.class);
-        template.dropCollection(User.class);
-        logger.info("Dropped Authority and User collections");
+        this.configuredAdminPassword = configuredAdminPassword;
     }
 
     @Override
@@ -119,14 +142,19 @@ public class InitialSetupMigration implements ApplicationRunner {
         }
     }
 
+    /** {@code doctor} -> {@code Doctor@12345}. Public by construction — see createAdmin. */
+    private String derivedPassword(String login) {
+        StringBuilder password = new StringBuilder(Character.toUpperCase(login.charAt(0)) + login.substring(1) + "@");
+        for (int i = 1; i < login.length(); i++) {
+            password.append(i);
+        }
+        return password.toString();
+    }
+
     private User createUser(Authority userAuthority) {
         User userUser = new User();
         String login = "user";
-        String password = (Character.toUpperCase(login.charAt(0)) + login.substring(1) + "@");
-        for (int i = 1; i < login.length(); i++) {
-            password += i;
-        }
-        logger.info("Creating user with login: {} and password: {}", login, password);
+        String password = derivedPassword(login);
         userUser.setId("user-2");
         userUser.setLogin("user");
         userUser.setPassword(passwordEncoder.encode(password));
@@ -144,11 +172,21 @@ public class InitialSetupMigration implements ApplicationRunner {
     private User createAdmin(Authority adminAuthority, Authority userAuthority) {
         User adminUser = new User();
         String login = "admin";
-        String password = (Character.toUpperCase(login.charAt(0)) + login.substring(1) + "@");
-        for (int i = 1; i < login.length(); i++) {
-            password += i;
+        String password;
+        if (StringUtils.hasText(configuredAdminPassword)) {
+            password = configuredAdminPassword;
+            logger.info("Creating admin with login: {} and the configured GATEWAY_ADMIN_PASSWORD", login);
+        } else {
+            password = derivedPassword(login);
+            // The value itself is deliberately not logged. These logs are shipped off the host, and
+            // a password in them outlives the terminal it was printed to. The derived form is
+            // documented in AGENTS.md for local use.
+            logger.warn(
+                "Creating admin with login: {} and a password derived from it — this value is public. " +
+                "Set GATEWAY_ADMIN_PASSWORD for any deployment that is reachable by anyone else.",
+                login
+            );
         }
-        logger.info("Creating admin with login: {} and password: {}", login, password);
         adminUser.setId("user-1");
         adminUser.setLogin("admin");
         adminUser.setPassword(passwordEncoder.encode(password));
@@ -166,10 +204,7 @@ public class InitialSetupMigration implements ApplicationRunner {
 
     private User createProfessional(Authority professionalAuthority, String login) {
         User professionalUser = new User();
-        String password = (Character.toUpperCase(login.charAt(0)) + login.substring(1) + "@");
-        for (int i = 1; i < login.length(); i++) {
-            password += i;
-        }
+        String password = derivedPassword(login);
         professionalUser.setId(UUID.randomUUID().toString());
         professionalUser.setLogin(login);
         professionalUser.setPassword(passwordEncoder.encode(password));
