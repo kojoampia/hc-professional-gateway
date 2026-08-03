@@ -116,8 +116,13 @@ spring:
     gateway:
       # Spring Cloud Gateway 5 (Boot 4) reads its config from
       # spring.cloud.gateway.server.webflux.* — the pre-upgrade top-level keys
-      # are silently ignored. Routes preserve the registered service-name case
-      # so the frontend contract /services/professionalService/** keeps working.
+      # are silently ignored.
+      #
+      # Service names are lower case throughout, so the discovery locator lower-cases
+      # the serviceId as well and the generated route matches the frontend contract
+      # /services/professionalservice/** without depending on registration casing.
+      # This was `false` while the registered name was mixed-case `professionalService`;
+      # that is the only reason it existed.
       server:
         webflux:
           default-filters:
@@ -125,7 +130,7 @@ spring:
           discovery:
             locator:
               enabled: true
-              lower-case-service-id: false
+              lower-case-service-id: true
               predicates:
                 - name: Path
                   args:
