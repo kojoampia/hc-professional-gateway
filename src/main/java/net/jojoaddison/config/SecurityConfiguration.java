@@ -83,6 +83,14 @@ public class SecurityConfiguration {
                     .pathMatchers("/api/account/reset-password/finish").permitAll()
                     .pathMatchers("/api/admin/**").hasAuthority(AuthoritiesConstants.ADMIN)
                     .pathMatchers("/api/**").authenticated()
+                    // The STOMP handshake for message notifications, routed straight through to
+                    // professionalservice. It has to be open HERE: a browser cannot set an
+                    // Authorization header on a WebSocket upgrade, so the token is presented on the
+                    // CONNECT frame and validated by the service, which drops the session when it is
+                    // missing or invalid. Without this rule the exchange matches nothing below and
+                    // Spring Security denies it — the handshake 401s before it is ever routed, and
+                    // the symptom is a dashboard that renders but never updates rather than an error.
+                    .pathMatchers("/websocket/**").permitAll()
                     .pathMatchers("/services/*/management/health/readiness").permitAll()
                     .pathMatchers("/services/*/v3/api-docs").hasAuthority(AuthoritiesConstants.ADMIN)
                     .pathMatchers("/services/**").authenticated()
