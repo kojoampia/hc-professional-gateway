@@ -6,6 +6,7 @@ import static org.springframework.security.web.server.util.matcher.ServerWebExch
 import net.jojoaddison.security.AuthoritiesConstants;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.ReactiveAuthenticationManager;
 import org.springframework.security.authentication.UserDetailsRepositoryReactiveAuthenticationManager;
 import org.springframework.security.config.annotation.method.configuration.EnableReactiveMethodSecurity;
@@ -81,6 +82,14 @@ public class SecurityConfiguration {
                     .pathMatchers("/api/activate").permitAll()
                     .pathMatchers("/api/account/reset-password/init").permitAll()
                     .pathMatchers("/api/account/reset-password/finish").permitAll()
+                    // Mobile refresh-token endpoints. These MUST be permitAll and MUST sit above the
+                    // "/api/**" rule below, which would otherwise swallow them: by the time a client
+                    // calls either one its access token has usually already expired, so requiring a
+                    // valid one would make refresh impossible exactly when it is needed. They
+                    // authorize on the refresh token itself — see AuthSessionResource.
+                    .pathMatchers(HttpMethod.POST, "/api/auth/refresh").permitAll()
+                    .pathMatchers(HttpMethod.POST, "/api/auth/logout").permitAll()
+                    .pathMatchers("/api/auth/sessions/**").authenticated()
                     .pathMatchers("/api/admin/**").hasAuthority(AuthoritiesConstants.ADMIN)
                     .pathMatchers("/api/**").authenticated()
                     // The STOMP handshake for message notifications, routed straight through to

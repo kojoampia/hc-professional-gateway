@@ -92,6 +92,34 @@ server:
 # ===================================================================
 
 jhipster:
+  # ===================================================================
+  # CORS for the mobile app (MOB4).
+  #
+  # This stack is single-origin by design: nginx serves the SPA and proxies /api, /services and
+  # /websocket from the same host, so the browser never issues a cross-origin request and this
+  # filter never engages for it. A Capacitor app IS a different origin, and is the first client
+  # ever to need real CORS here.
+  #
+  # Four deliberate choices:
+  #   1. allow-credentials is FALSE. Auth is a bearer token, never a cookie. With credentials off,
+  #      no cookie can ride a cross-origin request at all. (The dev profile sets it true; prod must
+  #      not inherit that.)
+  #   2. https://professional.abofonsa.com is deliberately ABSENT. Same-origin requests carry no
+  #      Origin header, so adding it would change nothing except to weaken the guarantee that the
+  #      browser path is untouched by this block.
+  #   3. Android's Capacitor origin is https://localhost, NOT http://localhost — androidScheme has
+  #      defaulted to https since Capacitor 6, and the app pins it explicitly. ionic://localhost
+  #      covers older iOS configurations.
+  #   4. api/ stays CORS-free. It is only ever reached through this gateway; a second CORS layer
+  #      would emit duplicate Access-Control-Allow-Origin headers, which browsers reject outright.
+  # ===================================================================
+  cors:
+    allowed-origins: 'capacitor://localhost,https://localhost,ionic://localhost'
+    allowed-methods: 'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+    allowed-headers: 'Authorization,Content-Type,Accept,Accept-Language,X-Requested-With'
+    exposed-headers: 'Authorization,Link,X-Total-Count,X-${jhipster.clientApp.name}-alert,X-${jhipster.clientApp.name}-error,X-${jhipster.clientApp.name}-params'
+    allow-credentials: false
+    max-age: 1800
   http:
     cache: # Used by the CachingHttpHeadersFilter
       timeToLiveInDays: 1461

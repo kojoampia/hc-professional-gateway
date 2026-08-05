@@ -8,10 +8,13 @@ import net.jojoaddison.config.SecurityConfiguration;
 import net.jojoaddison.config.SecurityJwtConfiguration;
 import net.jojoaddison.config.WebConfigurer;
 import net.jojoaddison.management.SecurityMetersService;
+import net.jojoaddison.security.jwt.TokenProvider;
+import net.jojoaddison.service.RefreshTokenService;
 import net.jojoaddison.web.rest.AuthenticateController;
 import org.springframework.boot.webflux.test.autoconfigure.WebFluxTest;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import tech.jhipster.config.JHipsterProperties;
 
 @Target(ElementType.TYPE)
@@ -24,8 +27,15 @@ import tech.jhipster.config.JHipsterProperties;
         SecurityJwtConfiguration.class,
         SecurityMetersService.class,
         JwtAuthenticationTestUtils.class,
+        // AuthenticateController mints through TokenProvider since MOB3, so the slice needs it.
+        // It only depends on JwtEncoder, which SecurityJwtConfiguration above already supplies.
+        TokenProvider.class,
     }
 )
+// RefreshTokenService is the controller's other new dependency, but it reaches MongoDB and this
+// slice exercises nothing but JWT validation on GET /api/authenticate. Mocking it keeps the slice
+// a slice — pulling in a real one would drag Mongo into a test that has no business needing it.
+@MockitoBean(types = { RefreshTokenService.class })
 @WebFluxTest(
     controllers = { AuthenticateController.class },
     properties = {

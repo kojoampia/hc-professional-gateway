@@ -256,4 +256,17 @@ jhipster:
 # https://www.jhipster.tech/common-application-properties/
 # ===================================================================
 
-# application:
+application:
+  auth:
+    mobile:
+      # Mobile session settings. Deliberately a SEPARATE namespace from
+      # jhipster.security.authentication.jwt.*, whose 24h/30d values stay untouched — the browser
+      # app and the two sibling stacks that share the signing key cannot regress when these change.
+      #
+      # 15 minutes is short on purpose: it is the exposure window after a refresh token is revoked,
+      # because professionalservice is stateless and holds no revocation list.
+      access-token-validity-in-seconds: 900
+      # Rotated on every use, so this bounds an IDLE session rather than a total session length.
+      refresh-token-validity-in-days: 60
+      # Concurrent live sessions per login; the oldest are revoked past this. 0 disables the cap.
+      max-sessions-per-login: 5
