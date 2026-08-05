@@ -36,7 +36,7 @@ Server port: **5505** (`application-dev.yml` / `application-prod.yml`). The Angu
 
 The same set is duplicated in `api/security/AuthoritiesConstants` and in web's `config/authority.constants.ts` + `health-connect/authority-role.ts`, and it **drifts silently** — adding a role here without the other two repos produces a token whose role the microservice ignores and the UI can't badge. `api/` additionally enforces a mutation matrix (`CLINICAL_MUTATION`: admin, doctor, nurse, paramedic, pharmacist, therapist mutate; carer/angel/chemist/technician are read-only in v1); this gateway does not, so authorising a role here is not the same as letting it write.
 
-This gateway is the **only** JWT issuer; downstream services validate. `../professional-onboarding-workflow.md` (at the workspace root, since it spans all three repos) is the spec for the role model; Java comments in this repo cite it by bare filename.
+This gateway is the **only** JWT issuer; downstream services validate. `../docs/professional-onboarding-workflow.md` (at the workspace root, since it spans all three repos) is the spec for the role model; Java comments in this repo cite it by bare filename.
 
 ## Domain events
 
