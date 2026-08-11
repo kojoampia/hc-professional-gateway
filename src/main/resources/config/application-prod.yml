@@ -114,7 +114,20 @@ jhipster:
   #      would emit duplicate Access-Control-Allow-Origin headers, which browsers reject outright.
   # ===================================================================
   cors:
-    allowed-origins: 'capacitor://localhost,https://localhost,ionic://localhost'
+    # The portal's OWN origin must be on this list. Browsers attach `Origin` to same-origin POSTs
+    # from fetch/XHR, so Spring's CorsWebFilter validates it even though the request never left the
+    # site — and an origin that does not match is rejected with 403 before any handler runs.
+    #
+    # Listing only the mobile schemes (MOB3, 3fe9abb) therefore broke every browser sign-in in
+    # production for six days while looking healthy from every angle we checked: curl sends no
+    # Origin header, so deploy.sh's authentication check passed, and MOB4's gate — "a same-origin
+    # browser request still receives no ACAO header" — was verified the same way and also passed.
+    # The only thing that reproduces it is a request that actually carries the site's Origin.
+    #
+    # Overridable so a deployment on another domain does not have to fork this file; the default
+    # names the domain this repo is actually deployed to, so forgetting the variable degrades to
+    # working rather than to a portal nobody can log into.
+    allowed-origins: '${CORS_ALLOWED_ORIGINS:https://professional.abofonsa.com,capacitor://localhost,https://localhost,ionic://localhost}'
     allowed-methods: 'GET,POST,PUT,PATCH,DELETE,OPTIONS'
     allowed-headers: 'Authorization,Content-Type,Accept,Accept-Language,X-Requested-With'
     exposed-headers: 'Authorization,Link,X-Total-Count,X-${jhipster.clientApp.name}-alert,X-${jhipster.clientApp.name}-error,X-${jhipster.clientApp.name}-params'
