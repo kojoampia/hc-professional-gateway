@@ -72,7 +72,27 @@ public class MailService {
             .subscribeOn(Schedulers.boundedElastic())
             // Fire-and-forget, so nothing downstream would ever see a failure: sendEmailSync already logs the mail
             // failures it expects, and this handles the rest rather than letting Reactor drop them silently.
-            .subscribe(null, e -> log.warn("Email to '{}' failed unexpectedly", to, e));
+            .subscribe(null, e -> log.warn("Email to '{}' failed unexpectedly", maskEmail(to), e));
+    }
+
+    /**
+     * Reduces an address to {@code j***@example.com} for logging.
+     *
+     * <p>These logs are shipped off the host, so a full address in one outlives the incident it was
+     * written for. The domain is kept because it is what a relay problem shows up in — "every
+     * failure is @nhs.net" is a diagnosis, "every failure is to a user" is not. Where a login is on
+     * hand it is preferred over this entirely, being both a better identifier and not personal data.
+     */
+    static String maskEmail(String address) {
+        if (address == null || address.isBlank()) {
+            return "(none)";
+        }
+        int at = address.indexOf('@');
+        if (at < 1) {
+            // No local part to keep, so keep nothing: a bare domain or a malformed value.
+            return "***";
+        }
+        return address.charAt(0) + "***" + address.substring(at);
     }
 
     private void sendEmailSync(String to, String subject, String content, boolean isMultipart, boolean isHtml) {
@@ -94,9 +114,14 @@ public class MailService {
             message.setSubject(subject);
             message.setText(content, isHtml);
             javaMailSender.send(mimeMessage);
-            log.debug("Sent email to User '{}'", to);
+            // INFO, not DEBUG. This is the only record that a message actually left for a given
+            // user, and production runs net.jojoaddison at INFO — so at DEBUG a registration was
+            // entirely invisible in the logs and "I never received the activation email" could not
+            // be answered either way. The subject distinguishes activation from reset without
+            // adding anything sensitive.
+            log.info("Sent email to '{}' with subject '{}'", maskEmail(to), subject);
         } catch (MailException | MessagingException e) {
-            log.warn("Email could not be sent to user '{}'", to, e);
+            log.warn("Email could not be sent to user '{}'", maskEmail(to), e);
         }
     }
 
@@ -111,7 +136,7 @@ public class MailService {
             return Mono.empty();
         })
             .subscribeOn(Schedulers.boundedElastic())
-            .subscribe(null, e -> log.warn("Email to '{}' failed unexpectedly", user.getEmail(), e));
+            .subscribe(null, e -> log.warn("Email to user '{}' failed unexpectedly", user.getLogin(), e));
     }
 
     private void sendEmailFromTemplateSync(User user, String templateName, String titleKey) {
@@ -129,17 +154,17 @@ public class MailService {
     }
 
     public void sendActivationEmail(User user) {
-        log.debug("Sending activation email to '{}'", user.getEmail());
+        log.info("Sending activation email to user '{}'", user.getLogin());
         this.sendEmailFromTemplate(user, "mail/activationEmail", "email.activation.title");
     }
 
     public void sendCreationEmail(User user) {
-        log.debug("Sending creation email to '{}'", user.getEmail());
+        log.info("Sending creation email to user '{}'", user.getLogin());
         this.sendEmailFromTemplate(user, "mail/creationEmail", "email.activation.title");
     }
 
     public void sendPasswordResetMail(User user) {
-        log.debug("Sending password reset email to '{}'", user.getEmail());
+        log.info("Sending password reset email to user '{}'", user.getLogin());
         this.sendEmailFromTemplate(user, "mail/passwordResetEmail", "email.reset.title");
     }
 }
