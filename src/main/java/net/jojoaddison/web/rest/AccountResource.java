@@ -2,11 +2,14 @@ package net.jojoaddison.web.rest;
 
 import jakarta.validation.Valid;
 import java.util.Objects;
+import net.jojoaddison.config.Constants;
 import net.jojoaddison.repository.UserRepository;
 import net.jojoaddison.security.SecurityUtils;
+import net.jojoaddison.service.LoginAvailabilityService;
 import net.jojoaddison.service.MailService;
 import net.jojoaddison.service.UserService;
 import net.jojoaddison.service.dto.AdminUserDTO;
+import net.jojoaddison.service.dto.LoginAvailabilityDTO;
 import net.jojoaddison.service.dto.PasswordChangeDTO;
 import net.jojoaddison.web.rest.errors.*;
 import net.jojoaddison.web.rest.vm.KeyAndPasswordVM;
@@ -43,16 +46,20 @@ public class AccountResource {
 
     private final net.jojoaddison.broker.RegistrationEventPublisher registrationEventPublisher;
 
+    private final LoginAvailabilityService loginAvailabilityService;
+
     public AccountResource(
         UserRepository userRepository,
         UserService userService,
         MailService mailService,
-        net.jojoaddison.broker.RegistrationEventPublisher registrationEventPublisher
+        net.jojoaddison.broker.RegistrationEventPublisher registrationEventPublisher,
+        LoginAvailabilityService loginAvailabilityService
     ) {
         this.userRepository = userRepository;
         this.userService = userService;
         this.mailService = mailService;
         this.registrationEventPublisher = registrationEventPublisher;
+        this.loginAvailabilityService = loginAvailabilityService;
     }
 
     /**
@@ -88,6 +95,35 @@ public class AccountResource {
                     ).subscribeOn(Schedulers.boundedElastic())
             )
             .then();
+    }
+
+    /**
+     * {@code GET  /register/login-available} : whether a login can still be registered.
+     *
+     * <p>Anonymous, because it serves the registration form, and the caller has no account yet by
+     * definition. See {@link net.jojoaddison.service.LoginAvailabilityService} for why that is
+     * acceptable and what must not be added to the response.
+     *
+     * <p>The answer is advisory: nothing is reserved, and {@code POST /register} remains the
+     * authority. A login reported available can be taken between the check and the submit, which is
+     * why registration still returns {@code 400 LOGIN_ALREADY_USED} and the form still handles it.
+     *
+     * @param login the candidate login; validated against the same pattern and length registration
+     *              enforces, so a malformed value is a {@code 400} rather than a wasted query.
+     * @return the normalised login, whether it is free, and alternatives when it is not.
+     */
+    @GetMapping("/register/login-available")
+    public Mono<LoginAvailabilityDTO> isLoginAvailable(@RequestParam("login") String login) {
+        // Validated here rather than with @Pattern/@Size on the parameter. Those need @Validated on
+        // the class, which raises ConstraintViolationException — and this repo's reactive
+        // ExceptionTranslator does not map it, so a malformed login came back as 500 instead of
+        // 400. Adding a global handler for it would change the error shape of every other endpoint
+        // on this controller, so the check is explicit and local.
+        String candidate = LoginAvailabilityService.normalise(login);
+        if (candidate.isEmpty() || candidate.length() > 50 || !candidate.matches(Constants.LOGIN_REGEX)) {
+            throw new BadRequestAlertException("Invalid login", "userManagement", "invalidlogin");
+        }
+        return loginAvailabilityService.check(candidate);
     }
 
     /**

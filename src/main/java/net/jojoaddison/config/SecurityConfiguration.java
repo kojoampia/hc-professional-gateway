@@ -79,6 +79,12 @@ public class SecurityConfiguration {
                 authz
                     .pathMatchers("/api/authenticate").permitAll()
                     .pathMatchers("/api/register").permitAll()
+                    // The registration form's login look-ahead. A separate rule because the matcher
+                    // above is an exact path match, so it does NOT cover /api/register/**; without
+                    // this line the look-ahead falls through to /api/** and 401s for the anonymous
+                    // caller it exists to serve. GET-only, so nothing under this prefix can be
+                    // written to anonymously if a POST is ever added here.
+                    .pathMatchers(HttpMethod.GET, "/api/register/login-available").permitAll()
                     .pathMatchers("/api/activate").permitAll()
                     .pathMatchers("/api/account/reset-password/init").permitAll()
                     .pathMatchers("/api/account/reset-password/finish").permitAll()
