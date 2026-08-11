@@ -228,6 +228,19 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler implemen
         if (err instanceof ConcurrencyFailureException) return HttpStatus.CONFLICT;
         if (err instanceof BadCredentialsException) return HttpStatus.UNAUTHORIZED;
         if (err instanceof UsernameNotFoundException) return HttpStatus.UNAUTHORIZED;
+        // Every other authentication failure is also a 401, not a 500. Only the two subtypes above
+        // were listed, so anything else extending AuthenticationException fell through to Spring's
+        // default — and UserNotActivatedException is exactly that. The effect was that a person who
+        // registered and tried to sign in before clicking the activation link got "500 Internal
+        // Server Error", which reads as the site being broken rather than as their account not being
+        // ready. It happened on every attempt, right or wrong password, because the exception is
+        // thrown while loading the user, before any password is checked.
+        //
+        // Deliberately kept generic: getProblemDetailWithCause already answers every
+        // AuthenticationException with "Invalid credentials" so that a failed sign-in cannot be used
+        // to tell an existing account from a missing one. Widening the status without widening the
+        // detail keeps that.
+        if (err instanceof AuthenticationException) return HttpStatus.UNAUTHORIZED;
         return null;
     }
 
