@@ -3,7 +3,9 @@ package net.jojoaddison.web.rest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.domain.Authority;
 import net.jojoaddison.domain.RefreshToken;
@@ -356,6 +358,141 @@ class AuthSessionResourceIT {
     }
 
     // ------------------------------------------------------------------ security config wiring
+
+    // ------------------------------------------------------------------ session management
+    //
+    // GET /sessions and DELETE /sessions/{familyId} are the "signed in on these devices, sign that
+    // one out" surface. Until now the only thing asserted about them was that an anonymous caller
+    // gets 401 — the listing had never been read and the revocation had never been performed, so
+    // both branches of revokeOwnSession's found/not-found ternary were untaken.
+
+    /** The listing shows the caller's live sessions, with the device details the screen renders. */
+    @Test
+    void listsTheCallersActiveSessionsWithTheirDeviceDetails() {
+        Map<String, Object> mobile = loginAs("mobile");
+
+        List<Map<String, Object>> sessions = getSessions((String) mobile.get("id_token"));
+
+        assertThat(sessions).hasSize(1);
+        assertThat(sessions.get(0))
+            .containsEntry("client", "mobile")
+            .containsEntry("deviceId", "device-1")
+            .containsEntry("deviceName", "Pixel 9");
+        assertThat(sessions.get(0).get("id")).isNotNull();
+        assertThat(sessions.get(0).get("issuedAt")).isNotNull();
+        assertThat(sessions.get(0).get("expiresAt")).isNotNull();
+    }
+
+    /** A revoked session leaves the list, which is what makes the screen truthful after a sign-out. */
+    @Test
+    void revokingASessionRemovesItFromTheListing() {
+        Map<String, Object> mobile = loginAs("mobile");
+        String accessToken = (String) mobile.get("id_token");
+        String familyId = (String) getSessions(accessToken).get(0).get("id");
+
+        webTestClient
+            .delete()
+            .uri("/api/auth/sessions/{familyId}", familyId)
+            .headers(headers -> headers.setBearerAuth(accessToken))
+            .exchange()
+            .expectStatus()
+            .isNoContent();
+
+        assertThat(getSessions(accessToken)).isEmpty();
+        // And the refresh token that session was built on is dead, not merely hidden.
+        postRefresh((String) mobile.get("refresh_token")).expectStatus().isUnauthorized();
+    }
+
+    /**
+     * <b>The ownership property.</b> A family id belonging to somebody else must not be revocable,
+     * and the refusal must be indistinguishable from one that does not exist — otherwise the
+     * endpoint becomes an oracle for discovering other people's session ids.
+     *
+     * <p>This is the assertion that most needed writing: {@code revokeOwnSession} folds
+     * "not found" and "not yours" into one {@code false} deliberately, and nothing checked that the
+     * second case was reached at all.
+     */
+    @Test
+    void cannotRevokeASessionBelongingToAnotherUser() {
+        Map<String, Object> victimSession = loginAs("mobile");
+        String victimAccess = (String) victimSession.get("id_token");
+        String victimFamily = (String) getSessions(victimAccess).get(0).get("id");
+
+        String attackerAccess = (String) loginAsOtherUser().get("id_token");
+
+        webTestClient
+            .delete()
+            .uri("/api/auth/sessions/{familyId}", victimFamily)
+            .headers(headers -> headers.setBearerAuth(attackerAccess))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+
+        // Untouched: the victim is still signed in on that device.
+        assertThat(getSessions(victimAccess)).hasSize(1);
+        postRefresh((String) victimSession.get("refresh_token")).expectStatus().isOk();
+    }
+
+    /** An id that matches no family answers exactly as one that is not yours does. */
+    @Test
+    void revokingAnUnknownSessionAnswersNotFound() {
+        String accessToken = (String) loginAs("mobile").get("id_token");
+
+        webTestClient
+            .delete()
+            .uri("/api/auth/sessions/{familyId}", "no-such-family-" + UUID.randomUUID())
+            .headers(headers -> headers.setBearerAuth(accessToken))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+    }
+
+    /** Browser sign-in mints no refresh token, so that account has no sessions to list. */
+    @Test
+    void listsNothingForAnAccountWithNoRefreshTokens() {
+        String accessToken = (String) loginAs(null).get("id_token");
+
+        assertThat(getSessions(accessToken)).isEmpty();
+    }
+
+    private List<Map<String, Object>> getSessions(String accessToken) {
+        return webTestClient
+            .get()
+            .uri("/api/auth/sessions")
+            .headers(headers -> headers.setBearerAuth(accessToken))
+            .exchange()
+            .expectStatus()
+            .isOk()
+            .expectBody(new org.springframework.core.ParameterizedTypeReference<List<Map<String, Object>>>() {})
+            .returnResult()
+            .getResponseBody();
+    }
+
+    /** A second, unrelated account — for the ownership check. */
+    private Map<String, Object> loginAsOtherUser() {
+        String other = "other-" + Instant.now().toEpochMilli() + "-" + Math.abs(UUID.randomUUID().hashCode());
+        Authority authority = new Authority();
+        authority.setName(AuthoritiesConstants.USER);
+        User user = new User();
+        user.setLogin(other);
+        user.setEmail(other + "@example.com");
+        user.setActivated(true);
+        user.setPassword(passwordEncoder.encode(PASSWORD));
+        user.getAuthorities().add(authority);
+        userRepository.save(user).block();
+
+        return webTestClient
+            .post()
+            .uri("/api/authenticate")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(Map.of("username", other, "password", PASSWORD, "client", "mobile", "deviceId", "device-2", "deviceName", "Pixel 8"))
+            .exchange()
+            .expectStatus()
+            .isOk()
+            .expectBody(new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() {})
+            .returnResult()
+            .getResponseBody();
+    }
 
     @Test
     void refreshAndLogoutArePublicButSessionsRequireAuthentication() {
