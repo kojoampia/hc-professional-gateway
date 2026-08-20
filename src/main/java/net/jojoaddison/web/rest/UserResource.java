@@ -158,7 +158,13 @@ public class UserResource {
                                         net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_INVITATION,
                                         actor
                                     )
-                            ).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                            )
+                                .then(
+                                    reactor.core.publisher.Mono.fromRunnable(
+                                        () -> registrationEventPublisher.publishOnboardingInProgress(user.getId(), user.getLogin(), actor)
+                                    )
+                                )
+                                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
                     )
                     .thenReturn(user))
             .map(user -> {

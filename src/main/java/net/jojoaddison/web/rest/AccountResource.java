@@ -92,7 +92,16 @@ public class AccountResource {
                                 net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_SELF_SERVICE,
                                 user.getLogin()
                             )
-                    ).subscribeOn(Schedulers.boundedElastic())
+                    )
+                        // Same runnable, same scheduler: onboarding starts the moment the account
+                        // does, and both events are keyed by accountId on one topic so the admin
+                        // portal reads them in order.
+                        .then(
+                            Mono.fromRunnable(
+                                () -> registrationEventPublisher.publishOnboardingInProgress(user.getId(), user.getLogin(), user.getLogin())
+                            )
+                        )
+                        .subscribeOn(Schedulers.boundedElastic())
             )
             .then();
     }
