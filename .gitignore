@@ -154,3 +154,7 @@ Desktop.ini
 ######################
 /coverage/
 /.nyc_output/
+
+# Never commit a real credential here again. The copy tracked at this path from 2024-03-30
+# until 2026-09-01 held live SMTP and registry passwords, identical across five repositories.
+src/main/docker/.env
