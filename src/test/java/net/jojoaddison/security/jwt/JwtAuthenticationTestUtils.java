@@ -63,29 +63,48 @@ public class JwtAuthenticationTestUtils {
     }
 
     /**
-     * A token carrying exactly the authorities given.
+     * A token carrying exactly the authorities given — and, given none, <b>no {@code auth} claim at
+     * all</b>.
      *
-     * <p>The {@code auth} claim is written as ONE SPACE-DELIMITED STRING, because that is what
+     * <p>The claim is written as ONE SPACE-DELIMITED STRING, because that is what
      * {@link net.jojoaddison.security.jwt.TokenProvider} really mints and what every token in the
      * estate looks like on the wire. {@link #createValidTokenForUser} above writes a {@code List}
      * instead; {@code JwtGrantedAuthoritiesConverter} accepts both, so that difference is invisible
      * until something reads the claim itself. A rule test asserting who may pass should not be the
      * place that first discovers the two shapes are not interchangeable.
+     *
+     * <p><b>The empty case omits the claim rather than writing {@code ""}</b>, which is a different
+     * path through {@code JwtGrantedAuthoritiesConverter} — absent claim versus present-and-empty —
+     * and it is the one a hand-minted probe token takes. It used to write {@code String.join(" ")},
+     * so a test whose name said "no {@code auth} claim at all" was exercising the empty-string path
+     * and leaving the absent one uncovered. Both assertions are valid; only one of them was the one
+     * being described. {@link #createTokenWithEmptyAuthorityClaim} keeps the other reachable.
      */
     public static String createTokenWithAuthorities(String jwtKey, String user, String... authorities) {
+        return encodeToken(jwtKey, user, authorities.length == 0 ? null : String.join(" ", authorities));
+    }
+
+    /**
+     * A token whose {@code auth} claim is present and empty — the shape {@code TokenProvider} mints
+     * for an account holding no authority, since it always writes the claim.
+     */
+    public static String createTokenWithEmptyAuthorityClaim(String jwtKey, String user) {
+        return encodeToken(jwtKey, user, "");
+    }
+
+    /** {@code authorities == null} omits the claim; anything else writes it verbatim. */
+    private static String encodeToken(String jwtKey, String user, String authorities) {
         JwtEncoder encoder = jwtEncoder(jwtKey);
 
         var now = Instant.now();
 
-        JwtClaimsSet claims = JwtClaimsSet.builder()
-            .issuedAt(now)
-            .expiresAt(now.plusSeconds(60))
-            .subject(user)
-            .claims(customClaim -> customClaim.put(AUTHORITIES_KEY, String.join(" ", authorities)))
-            .build();
+        JwtClaimsSet.Builder claims = JwtClaimsSet.builder().issuedAt(now).expiresAt(now.plusSeconds(60)).subject(user);
+        if (authorities != null) {
+            claims.claims(customClaim -> customClaim.put(AUTHORITIES_KEY, authorities));
+        }
 
         JwsHeader jwsHeader = JwsHeader.with(JWT_ALGORITHM).build();
-        return encoder.encode(JwtEncoderParameters.from(jwsHeader, claims)).getTokenValue();
+        return encoder.encode(JwtEncoderParameters.from(jwsHeader, claims.build())).getTokenValue();
     }
 
     public static String createTokenWithDifferentSignature() {

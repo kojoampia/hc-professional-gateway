@@ -122,23 +122,61 @@ public class SecurityConfiguration {
                     //    it: a gateway stricter than the service it fronts refuses a request the
                     //    service was written to serve, and the refusal is attributed to the service.
                     .pathMatchers("/services/professionalservice/api/onboarding/**").authenticated()
-                    // 2. Messaging. The shell, the sidebar and the tab bar all load
-                    //    `conversations` and `unread-count` on every signed-in page — for every
-                    //    account, including an applicant's, with no role check and no opt-out from
-                    //    the global error banner. A 403 here would put a red banner over the
-                    //    applicant's wizard on every navigation, permanently. api/ likewise holds
-                    //    `/api/messaging/**` at .authenticated() on the stated grounds that
-                    //    messaging is correspondence rather than clinical data.
-                    .pathMatchers("/services/professionalservice/api/messaging/**").authenticated()
+                    // 2. Messaging — EXACTLY THE THREE GETS THE SHELL FIRES BY ITSELF, and no more.
+                    //    `MessagesApiService` is injected by the shell, the sidebar and the tab bar
+                    //    and loads `conversations` + `unread-count` on every signed-in page for
+                    //    every account, including an applicant's, with no role check and no opt-out
+                    //    from the global error banner; `messages/{id}` is fetched on every socket
+                    //    frame, because the notification carries identifiers only. A 403 on any of
+                    //    the three would put a red banner over the applicant's wizard on every
+                    //    navigation, permanently.
+                    //
+                    //    THIS WAS `/api/messaging/**` ON ALL METHODS, which is materially wider than
+                    //    the enumeration above, and two endpoints under it are not own-scoped:
+                    //    `GET /recipients` returns account id, login and role for EVERY ACTIVE
+                    //    PROFESSIONAL ON THE ESTATE, unpaginated — a valid-login list for this
+                    //    gateway's own /api/authenticate — and `POST /conversations` injects a
+                    //    message into clinicians' inboxes, including a recipientRole broadcast to
+                    //    every nurse or doctor with a push notification behind it. Both were
+                    //    reachable by a self-registered ROLE_USER account and by an hc-patient
+                    //    token, which is the hole this whole rule exists to close.
+                    //
+                    //    Everything else `MessagesApiService` can call — opening a thread, replying,
+                    //    marking read, composing — is a deliberate action on the /messages page and
+                    //    falls to the authority rule below. An applicant is not a correspondent:
+                    //    nothing in this estate addresses one (`MessagingService.recipients` and
+                    //    `resolveRole` both read ACTIVE applications only), and onboarding
+                    //    correspondence travels as `correctionNotes` on the application, rendered on
+                    //    the applicant's own profile tab. See docs/backlog.md item 19.
+                    .pathMatchers(HttpMethod.GET, "/services/professionalservice/api/messaging/conversations").authenticated()
+                    .pathMatchers(HttpMethod.GET, "/services/professionalservice/api/messaging/unread-count").authenticated()
+                    .pathMatchers(HttpMethod.GET, "/services/professionalservice/api/messaging/messages/*").authenticated()
                     // 3. The caller's OWN duty roster, GET and the bare path only. The sidebar user
                     //    card loads it on sign-in for every account; for an applicant it answers an
                     //    empty list, because the resource resolves the caller from the token and
                     //    discloses nobody else's assignments.
                     //
-                    //    NOT `/duty-roster/**`. `/day/{date}` carries customer names, addresses and
-                    //    phone numbers and is only .authenticated() at the service, so a wildcard
-                    //    here would hand that to a patient token. `/all`, `/summary` and the
-                    //    customer trail stay behind the authority rule below for the same reason.
+                    //    NOT `/duty-roster/**`. `/day/{date}` is the one roster read that serves the
+                    //    stored document with its customer names, addresses and phone numbers, and
+                    //    the service holds it at .authenticated() — so this matcher is what keeps a
+                    //    token this gateway did not mint away from that handler at all. `/all`,
+                    //    `/summary` and the customer trail stay behind the authority rule below for
+                    //    the same reason.
+                    //
+                    //    THIS IS LAYERED DEFENCE, NOT THE LAST LINE OF IT, and the difference is
+                    //    worth stating because a reader who checks the claim will otherwise conclude
+                    //    the comment is simply wrong. `DutyRosterResource.day()` resolves the caller
+                    //    through `ownProfileId()` and returns an empty list for an account with no
+                    //    professional profile, so a patient token reaching it gets nothing rather
+                    //    than the estate's customers.
+                    //
+                    //    THE RESIDUAL IS REAL AND IS NOT THIS RULE'S TO FIX. `ownProfileId()`
+                    //    matches `Profile.accountId` against the token `sub`; the three gateways
+                    //    share one key and this one validates no issuer, so a caller from hc-patient
+                    //    WHOSE LOGIN STRING EQUALS A PROFESSIONAL'S resolves to that professional's
+                    //    profile. This matcher makes that unreachable on `/day`; it stays reachable
+                    //    through the onboarding island. Not introduced here — see docs/backlog.md
+                    //    item 27, and the `iss` work item 19 already names as the structural fix.
                     .pathMatchers(HttpMethod.GET, "/services/professionalservice/api/duty-roster").authenticated()
                     // Everything else behind the three microservice routes — professionalservice's
                     // clinical surface, and the cross-stack patientservice and adminservice routes.
