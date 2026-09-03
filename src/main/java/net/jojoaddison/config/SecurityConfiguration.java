@@ -108,7 +108,65 @@ public class SecurityConfiguration {
                     .pathMatchers("/websocket/**").permitAll()
                     .pathMatchers("/services/*/management/health/readiness").permitAll()
                     .pathMatchers("/services/*/v3/api-docs").hasAuthority(AuthoritiesConstants.ADMIN)
-                    .pathMatchers("/services/**").authenticated()
+                    // THE THREE ISLANDS BELOW ARE REACHABLE BY ANY AUTHENTICATED ACCOUNT, AND EACH
+                    // IS HERE BECAUSE A NAMED CALLER HOLDS NO CLINICAL AUTHORITY.
+                    //
+                    // An applicant holds ROLE_USER and nothing else until an administrator assigns
+                    // one, so the surfaces they touch cannot be gated on a clinical role. These are
+                    // the only three, established by reading every caller rather than by reasoning
+                    // about which ones ought to matter — see docs/backlog.md item 19.
+                    //
+                    // 1. Onboarding. The applicant's own application, profile, documents, progress
+                    //    and first-login acknowledgement. This mirrors api/'s own
+                    //    `/api/onboarding/**` .authenticated() rule exactly, and must keep mirroring
+                    //    it: a gateway stricter than the service it fronts refuses a request the
+                    //    service was written to serve, and the refusal is attributed to the service.
+                    .pathMatchers("/services/professionalservice/api/onboarding/**").authenticated()
+                    // 2. Messaging. The shell, the sidebar and the tab bar all load
+                    //    `conversations` and `unread-count` on every signed-in page — for every
+                    //    account, including an applicant's, with no role check and no opt-out from
+                    //    the global error banner. A 403 here would put a red banner over the
+                    //    applicant's wizard on every navigation, permanently. api/ likewise holds
+                    //    `/api/messaging/**` at .authenticated() on the stated grounds that
+                    //    messaging is correspondence rather than clinical data.
+                    .pathMatchers("/services/professionalservice/api/messaging/**").authenticated()
+                    // 3. The caller's OWN duty roster, GET and the bare path only. The sidebar user
+                    //    card loads it on sign-in for every account; for an applicant it answers an
+                    //    empty list, because the resource resolves the caller from the token and
+                    //    discloses nobody else's assignments.
+                    //
+                    //    NOT `/duty-roster/**`. `/day/{date}` carries customer names, addresses and
+                    //    phone numbers and is only .authenticated() at the service, so a wildcard
+                    //    here would hand that to a patient token. `/all`, `/summary` and the
+                    //    customer trail stay behind the authority rule below for the same reason.
+                    .pathMatchers(HttpMethod.GET, "/services/professionalservice/api/duty-roster").authenticated()
+                    // Everything else behind the three microservice routes — professionalservice's
+                    // clinical surface, and the cross-stack patientservice and adminservice routes.
+                    //
+                    // This was `.authenticated()`, which meant "authenticated by ANY of the three
+                    // stacks": they share one signing key, this gateway stamps no `iss` claim and its
+                    // decoder validates none, so nothing in a token says which gateway minted it. A
+                    // patient token therefore read the professional patient directory (verified on
+                    // quality, 2026-09-03: `ROLE_USER` alone got 200 from
+                    // /services/professionalservice/api/patients and
+                    // /services/patientservice/api/profiles). hc-admin's mirror-image route is
+                    // specified as ADMIN, or ADMIN/OPERATOR on GET, and this side is tightened first
+                    // so the estate does not carry two rules for one shape with the weaker one
+                    // reachable — hc-admin/docs/duty-roster-resolution.md § 9.1, decision 9.
+                    //
+                    // Deliberately NOT narrowed per prefix. adminservice is documented as usable
+                    // only for `/api/professionals/me/**`, and deploy/prod-server/compose.yml
+                    // declines to restate that list on the same grounds this rule declines to:
+                    // hc-admin owns which of its endpoints are self-service, and a copy here is a
+                    // second answer nobody would think to update. What this rule owns is WHO, not
+                    // WHICH — and the answer is the same for all three prefixes.
+                    //
+                    // The catch-all shape also keeps the deploy-time routing probe honest:
+                    // deploy.sh asks for /services/definitely-not-a-service/... with an admin token
+                    // and requires a 404, which distinguishes "the static route did not bind" from
+                    // "the request never reached routing". A denyAll() here would answer 403 and
+                    // that check would stop being able to tell the two apart.
+                    .pathMatchers("/services/**").hasAnyAuthority(AuthoritiesConstants.CLINICAL_AND_ADMIN)
                     .pathMatchers("/v3/api-docs/**").hasAuthority(AuthoritiesConstants.ADMIN)
                     .pathMatchers("/management/health").permitAll()
                     .pathMatchers("/management/health/**").permitAll()

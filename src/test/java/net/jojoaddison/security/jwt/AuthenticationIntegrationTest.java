@@ -43,6 +43,13 @@ import tech.jhipster.config.JHipsterProperties;
         "jhipster.security.authentication.jwt.token-validity-in-seconds=60000",
     }
 )
-@ComponentScan({})
+// `useDefaultFilters = false` rather than `@ComponentScan({})`, which does NOT mean "scan nothing".
+// An empty `basePackages` falls back to the package of the class carrying the annotation — and on a
+// composed annotation that is the TEST class, not this one. So the slice quietly scanned whichever
+// package a test using it happened to live in: harmless from `net.jojoaddison.security.jwt`, and an
+// immediate context failure from `net.jojoaddison.config`, where `RefreshTokenIndexInitializer` is a
+// `@Component` wanting a `ReactiveMongoTemplate` this slice has no reason to own. Registering nothing
+// is what was always meant, and it is now what happens wherever the test sits.
+@ComponentScan(useDefaultFilters = false)
 public @interface AuthenticationIntegrationTest {
 }
