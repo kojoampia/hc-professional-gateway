@@ -47,5 +47,39 @@ public final class AuthoritiesConstants {
 
     public static final String TECHNICIAN = "ROLE_TECHNICIAN";
 
+    /**
+     * Who may use the microservice routes under {@code /services/**}: the administrator and the nine
+     * clinical authorities.
+     *
+     * <p><b>All nine, not the six of {@code CLINICAL_MUTATION}.</b> Carer, angel, chemist and
+     * technician are read-only in v1, which is a rule about <em>writes</em> and is enforced by the
+     * services themselves ({@code api/config/SecurityConfiguration}, proved by
+     * {@code ClinicalAuthorityMatrixIT}). Naming only the six here would take those four out of the
+     * patient directory, the roster and their own earnings — a routing rule silently reimplementing a
+     * mutation rule, and getting it wrong.
+     *
+     * <p><b>{@code ROLE_USER} is deliberately absent, and that is the whole point of the list.</b> The
+     * three stacks share one signing key and no token this gateway issues carries an {@code iss}
+     * claim, so {@code .authenticated()} on {@code /services/**} meant "authenticated by any of the
+     * three" — and hc-patient grants {@code ROLE_USER} alongside {@code ROLE_PATIENT}
+     * ({@code hc-patient/gateway/service/UserService}), so a patient token satisfied it. Naming
+     * {@code ROLE_USER} here would restore exactly that.
+     *
+     * <p>Positive, never a {@code ROLE_PATIENT} denylist: which authorities the other two stacks mint
+     * is theirs to change, and a denylist written here goes stale the day they add one.
+     */
+    public static final String[] CLINICAL_AND_ADMIN = {
+        ADMIN,
+        DOCTOR,
+        NURSE,
+        PARAMEDIC,
+        PHARMACIST,
+        THERAPIST,
+        CARER,
+        ANGEL,
+        CHEMIST,
+        TECHNICIAN,
+    };
+
     private AuthoritiesConstants() {}
 }

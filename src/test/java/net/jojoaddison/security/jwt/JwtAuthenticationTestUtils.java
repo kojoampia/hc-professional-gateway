@@ -62,6 +62,32 @@ public class JwtAuthenticationTestUtils {
         return encoder.encode(JwtEncoderParameters.from(jwsHeader, claims)).getTokenValue();
     }
 
+    /**
+     * A token carrying exactly the authorities given.
+     *
+     * <p>The {@code auth} claim is written as ONE SPACE-DELIMITED STRING, because that is what
+     * {@link net.jojoaddison.security.jwt.TokenProvider} really mints and what every token in the
+     * estate looks like on the wire. {@link #createValidTokenForUser} above writes a {@code List}
+     * instead; {@code JwtGrantedAuthoritiesConverter} accepts both, so that difference is invisible
+     * until something reads the claim itself. A rule test asserting who may pass should not be the
+     * place that first discovers the two shapes are not interchangeable.
+     */
+    public static String createTokenWithAuthorities(String jwtKey, String user, String... authorities) {
+        JwtEncoder encoder = jwtEncoder(jwtKey);
+
+        var now = Instant.now();
+
+        JwtClaimsSet claims = JwtClaimsSet.builder()
+            .issuedAt(now)
+            .expiresAt(now.plusSeconds(60))
+            .subject(user)
+            .claims(customClaim -> customClaim.put(AUTHORITIES_KEY, String.join(" ", authorities)))
+            .build();
+
+        JwsHeader jwsHeader = JwsHeader.with(JWT_ALGORITHM).build();
+        return encoder.encode(JwtEncoderParameters.from(jwsHeader, claims)).getTokenValue();
+    }
+
     public static String createTokenWithDifferentSignature() {
         JwtEncoder encoder = jwtEncoder("Xfd54a45s65fds737b9aafcb3412e07ed99b267f33413274720ddbb7f6c5e64e9f14075f2d7ed041592f0b7657baf8");
 
