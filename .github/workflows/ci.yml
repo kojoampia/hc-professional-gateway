@@ -1,0 +1,147 @@
+# Quality gate for every pull request and every push to main.
+#
+# release.yml says of itself, in as many words: "No quality gate here — this builds and pushes; it
+# does not run the test suite. […] Keep any gate in a separate workflow." This is that workflow, and
+# until it existed the sentence described a gate that was nowhere.
+#
+# Why it matters more here than the wording suggests. release.yml triggers on `push: [main]`, which
+# is *after* the merge, and since the deploy channel moved to ghcr (backlog item 16) that run is the
+# one publishing the artefact production ships. So on a bad merge the first automated thing that
+# happened was the break being built, tagged and pushed to the registry production pulls from — CI
+# did not catch it, CI distributed it. Nothing ran between a pull request and main; the gate was a
+# person running `clean verify` by hand and quoting the numbers in the PR body.
+#
+# This gate BUILDS AND TESTS ONLY. It logs into no registry, needs no secrets, pushes no image and
+# creates no tag — those belong to release.yml and must stay there. Folding the two together would
+# leave the registry with no image for a commit already on main, which is release.yml's own reason
+# for not carrying a gate.
+#
+# --- The two traps this file is shaped around ------------------------------------------------------
+#
+# 1. THE RUNNER NEEDS A REAL DOCKER DAEMON. Every `*IT` here is a Testcontainers test —
+#    MongoDbTestContainer starts mongo:7.0.6 and KafkaTestContainer starts confluentinc/cp-kafka:7.6.0
+#    — so a runner without Docker fails every context load in a way that reads as a code fault rather
+#    than as a missing daemon. ubuntu-latest ships one; a container job or a self-hosted runner might
+#    not, which is why the daemon is probed explicitly below before anything is built.
+#
+# 2. THE JDK MUST HAVE A COMPILER. docs/CLAUDE.md § Deployment records the whole trap: this
+#    workspace's ambient JAVA_HOME is a JRE with no javac, an incremental build passes on it because
+#    the compiler plugin finds nothing to do, and the failure message when it does fail is "release
+#    version 25 not supported", which sends you to the enforcer range instead of to the missing
+#    compiler. This repo is the half that fails FIRST, because its maven-compiler-plugin does not
+#    fork and so cannot fall back to javac on PATH the way api/'s does. temurin is a full JDK, and
+#    the probe below asserts javac exists rather than assuming the distribution.
+#
+# 25 rather than 26: pom.xml compiles at release 25 and its enforcer accepts [25,27). 26 remains in
+# range deliberately (deploy/docker/gateway.Dockerfile builds on temurin 26) — this pins the version
+# the gate is measured on, not the version the code supports.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # So a red main can be re-checked after a runner or dependency change without an empty commit.
+  workflow_dispatch:
+
+# A second push to the same PR makes the first run pointless. Cancel it rather than pay for both —
+# but never cancel a run on main, where the history of what passed is the point.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: clean verify
+    runs-on: ubuntu-latest
+    # Generous rather than tight. The suite is ~5 minutes of tests on this workstation; a two-core
+    # runner that also has to pull mongo and cp-kafka is several times that, and a timeout that
+    # trips on a slow pull looks exactly like a hung test.
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up the JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Cheap, and it fails HERE with a sentence naming the problem rather than fifty lines down on
+      # "release version 25 not supported". See the header.
+      - name: Confirm the JDK has a compiler
+        run: |
+          if [ ! -x "$JAVA_HOME/bin/javac" ]; then
+            echo "::error::$JAVA_HOME has no javac — this is a JRE. The build needs a JDK in [25,27); see docs/CLAUDE.md"
+            exit 1
+          fi
+          "$JAVA_HOME/bin/javac" -version
+
+      # Same argument: the integration tests cannot run without a daemon, and their failure without
+      # one does not mention Docker.
+      - name: Confirm a Docker daemon is available
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            echo "::error::no Docker daemon — every *IT here is a Testcontainers test and will fail as a context-load error"
+            exit 1
+          fi
+          docker version --format 'docker {{.Server.Version}}'
+
+      # `clean`, not an incremental build — an incremental one can pass with no compiler at all, so
+      # the whole point of the gate depends on the tree being cold.
+      #
+      # The default profile, matching the hand-run gate whose surefire/failsafe counts the backlog
+      # records. -Pprod is not run here: it changes packaging rather than behaviour, and the prod jar
+      # is built by deploy/docker/gateway.Dockerfile on the release path.
+      - name: Build and test
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
+
+      # The counts, in the PR, without anyone having to be trusted for them. That the numbers were
+      # quoted by hand in a PR body is half of what backlog item 25 is about.
+      - name: Report the test counts
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY" || echo "could not read the test reports" >> "$GITHUB_STEP_SUMMARY"
+          import glob, xml.etree.ElementTree as ET
+
+          def total(pattern):
+              tests = failures = errors = skipped = 0
+              for path in glob.glob(pattern):
+                  root = ET.parse(path).getroot()
+                  tests += int(root.get('tests', 0))
+                  failures += int(root.get('failures', 0))
+                  errors += int(root.get('errors', 0))
+                  skipped += int(root.get('skipped', 0))
+              return tests, failures, errors, skipped
+
+          print('### Gate')
+          print('')
+          print('| Suite | Tests | Failures | Errors | Skipped |')
+          print('| --- | --- | --- | --- | --- |')
+          for label, pattern in (
+              ('surefire', 'target/surefire-reports/TEST-*.xml'),
+              ('failsafe', 'target/failsafe-reports/TEST-*.xml'),
+          ):
+              t, f, e, s = total(pattern)
+              print(f'| {label} | {t} | {f} | {e} | {s} |')
+          print('')
+          print('checkstyle runs in the same `verify`; a violation fails the job before this step.')
+          PY
+
+      # A failed run is read by someone who cannot re-run it locally on the same commit as easily as
+      # they can click here.
+      - name: Keep the reports from a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-test-reports
+          path: |
+            target/surefire-reports/
+            target/failsafe-reports/
+          retention-days: 7
+          if-no-files-found: ignore
