@@ -1,0 +1,222 @@
+# Quality gate for every pull request and every push to main.
+#
+# release.yml says of itself, in as many words: "No quality gate here — this builds and pushes; it
+# does not run the test suite. […] Keep any gate in a separate workflow." This is that workflow, and
+# until it existed the sentence described a gate that was nowhere.
+#
+# Why it matters more here than the wording suggests. release.yml triggers on `push: [main]`, which
+# is *after* the merge, and since the deploy channel moved to ghcr (backlog item 16) that run is the
+# one publishing the artefact production ships. So on a bad merge the first automated thing that
+# happened was the break being built, tagged and pushed to the registry production pulls from — CI
+# did not catch it, CI distributed it. Nothing ran between a pull request and main; the gate was a
+# person running `clean verify` by hand and quoting the numbers in the PR body.
+#
+# This gate BUILDS AND TESTS ONLY. It logs into no registry, needs no secrets, pushes no image and
+# creates no tag — those belong to release.yml and must stay there. Folding the two together would
+# leave the registry with no image for a commit already on main, which is release.yml's own reason
+# for not carrying a gate.
+#
+# --- The two traps this file is shaped around ------------------------------------------------------
+#
+# 1. THE RUNNER NEEDS A REAL DOCKER DAEMON. Every `*IT` here is a Testcontainers test —
+#    MongoDbTestContainer starts mongo:7.0.6 and KafkaTestContainer starts confluentinc/cp-kafka:7.6.0
+#    — so a runner without Docker fails every context load in a way that reads as a code fault rather
+#    than as a missing daemon. ubuntu-latest ships one; a container job or a self-hosted runner might
+#    not, which is why the daemon is probed explicitly below before anything is built.
+#
+# 2. THE JDK MUST HAVE A COMPILER. docs/CLAUDE.md § Deployment records the whole trap: this
+#    workspace's ambient JAVA_HOME is a JRE with no javac, an incremental build passes on it because
+#    the compiler plugin finds nothing to do, and the failure message when it does fail is "release
+#    version 25 not supported", which sends you to the enforcer range instead of to the missing
+#    compiler. This repo is the half that fails FIRST, because its maven-compiler-plugin does not
+#    fork and so cannot fall back to javac on PATH the way api/'s does. temurin is a full JDK, and
+#    the probe below asserts javac exists rather than assuming the distribution.
+#
+# 25 rather than 26: pom.xml compiles at release 25 and its enforcer accepts [25,27). 26 remains in
+# range deliberately (deploy/docker/gateway.Dockerfile builds on temurin 26) — this pins the version
+# the gate is measured on, not the version the code supports.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # So a red main can be re-checked after a runner or dependency change without an empty commit.
+  workflow_dispatch:
+
+# A second push to the same PR makes the first run pointless. Cancel it rather than pay for both —
+# but never cancel a run on main, where the history of what passed is the point.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: clean verify
+    runs-on: ubuntu-latest
+    # Generous rather than tight. The suite is ~5 minutes of tests on this workstation; a two-core
+    # runner that also has to pull mongo and cp-kafka is several times that, and a timeout that
+    # trips on a slow pull looks exactly like a hung test.
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up the JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Cheap, and it fails HERE with a sentence naming the problem rather than fifty lines down on
+      # "release version 25 not supported". See the header.
+      - name: Confirm the JDK has a compiler
+        run: |
+          if [ ! -x "$JAVA_HOME/bin/javac" ]; then
+            echo "::error::$JAVA_HOME has no javac — this is a JRE. The build needs a JDK in [25,27); see docs/CLAUDE.md"
+            exit 1
+          fi
+          "$JAVA_HOME/bin/javac" -version
+
+      # Same argument: the integration tests cannot run without a daemon, and their failure without
+      # one does not mention Docker.
+      - name: Confirm a Docker daemon is available
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            echo "::error::no Docker daemon — every *IT here is a Testcontainers test and will fail as a context-load error"
+            exit 1
+          fi
+          docker version --format 'docker {{.Server.Version}}'
+
+      # --- The Java format gate, which is npm rather than Maven -----------------------------------
+      #
+      # `prettier:check` is the only thing in this repository that checks Java formatting, and it is
+      # not run by `verify`. What `verify` runs is easily mistaken for it:
+      #
+      #   * maven-checkstyle-plugin is configured `<includes>pom.xml,README.md</includes>` with the
+      #     nohttp ruleset — it checks TWO FILES for `http://` URLs. It is not a Java style gate and
+      #     never was; `npm run backend:nohttp:test` is the script name that says so.
+      #   * spotless-maven-plugin is bound to process-sources with goal `apply`, not `check`, so on a
+      #     CI runner it silently REFORMATS the checkout and then builds it. A green `clean verify`
+      #     therefore says nothing whatever about the formatting of the commit under test.
+      #
+      # Checked, never applied — the same wording and the same script web/ci.yml already runs. Node
+      # 22 rather than the `>=20.12.1` in engines: that floor is what the tooling tolerates, not what
+      # it is developed against, and pinning keeps CI off whatever ubuntu-latest ships next.
+      #
+      # Before `clean verify` on purpose: it is a minute against forty, and a formatting failure is
+      # not worth a full Testcontainers run to discover.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install the format tooling
+        run: npm ci --no-audit --no-fund
+
+      - name: Check Java formatting
+        run: npm run prettier:check
+
+      # `clean`, not an incremental build — an incremental one can pass with no compiler at all, so
+      # the whole point of the gate depends on the tree being cold.
+      #
+      # The default profile, matching the hand-run gate whose surefire/failsafe counts the backlog
+      # records. -Pprod is not run here: it changes packaging rather than behaviour, and the prod jar
+      # is built by deploy/docker/gateway.Dockerfile on the release path — which is on `push: [main]`,
+      # i.e. after the merge. That residual is named in backlog item 25's closure.
+      - name: Build and test
+        id: verify
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
+
+      # The counts, in the PR, without anyone having to be trusted for them. That the numbers were
+      # quoted by hand in a PR body is half of what backlog item 25 is about.
+      #
+      # AND A SUITE THAT RAN NOTHING FAILS THE JOB. This step used to render emptiness as
+      # cleanliness: run in a directory with no target/ it printed a well-formed
+      # `surefire | 0 | 0 | 0 | 0`, `failsafe | 0 | 0 | 0 | 0` and exited 0 — and in a table, "0
+      # failures, 0 errors" reads as success. It is the same shape as `-Dtest=SomeIT test` matching
+      # zero tests and reporting success, which docs/CLAUDE.md warns about by name. A pom change that
+      # stopped binding a phase would produce a green `verify` and a plausible summary under it, and
+      # nothing would say the tests had gone.
+      #
+      # Zero is the floor rather than the recorded baseline (76 surefire / 215 failsafe): a baseline
+      # written here has to be edited by every commit that adds a test, and a floor that gets edited
+      # to make a run pass is not a floor. The baselines live in docs/backlog.md, where a person
+      # compares them to this summary.
+      #
+      # `steps.verify.outcome != 'skipped'` so that a formatting failure — which skips the build —
+      # is not reported a second time as "no reports found", which would name the wrong cause.
+      - name: Report the test counts
+        if: always() && steps.verify.outcome != 'skipped'
+        run: |
+          python3 - <<'PY'
+          import glob, os, sys, xml.etree.ElementTree as ET
+
+          def total(pattern):
+              paths = glob.glob(pattern)
+              tests = failures = errors = skipped = 0
+              for path in paths:
+                  root = ET.parse(path).getroot()
+                  tests += int(root.get('tests', 0))
+                  failures += int(root.get('failures', 0))
+                  errors += int(root.get('errors', 0))
+                  skipped += int(root.get('skipped', 0))
+              return len(paths), tests, failures, errors, skipped
+
+          lines = ['### Gate', '',
+                   '| Suite | Tests | Failures | Errors | Skipped |',
+                   '| --- | --- | --- | --- | --- |']
+          empty = []
+          for label, pattern in (
+              ('surefire', 'target/surefire-reports/TEST-*.xml'),
+              ('failsafe', 'target/failsafe-reports/TEST-*.xml'),
+          ):
+              reports, t, f, e, s = total(pattern)
+              if not reports:
+                  lines.append(f'| {label} | **no reports found** | — | — | — |')
+                  empty.append(f'{label}: no {pattern} at all')
+              elif not t:
+                  lines.append(f'| {label} | **0** in {reports} report(s) | {f} | {e} | {s} |')
+                  empty.append(f'{label}: {reports} report(s), 0 tests in them')
+              else:
+                  lines.append(f'| {label} | {t} | {f} | {e} | {s} |')
+
+          lines += ['',
+                    'Java formatting is gated by `prettier:check` in the step above, not by this '
+                    'build: `checkstyle` here is the nohttp ruleset over `pom.xml` and `README.md` '
+                    'only (see `<includes>` in pom.xml), and `spotless` is bound with goal `apply`, '
+                    'so it reformats the checkout rather than checking it.']
+          if empty:
+              lines += ['', '**A suite ran no tests, so this run gated nothing:** ' +
+                        '; '.join(empty) + '.']
+
+          text = '\n'.join(lines)
+          print(text)
+          summary = os.environ.get('GITHUB_STEP_SUMMARY')
+          if summary:
+              with open(summary, 'a', encoding='utf-8') as handle:
+                  handle.write(text + '\n')
+
+          for entry in empty:
+              print(f'::error::{entry} — a suite that ran nothing is not a pass. Either the build '
+                    f'did not reach it or a phase is no longer bound; see the step above.',
+                    file=sys.stderr)
+          sys.exit(1 if empty else 0)
+          PY
+
+      # A failed run is read by someone who cannot re-run it locally on the same commit as easily as
+      # they can click here.
+      - name: Keep the reports from a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-test-reports
+          path: |
+            target/surefire-reports/
+            target/failsafe-reports/
+          retention-days: 7
+          if-no-files-found: ignore
