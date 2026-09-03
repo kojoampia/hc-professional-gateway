@@ -1,6 +1,7 @@
 package net.jojoaddison.config;
 
 import static net.jojoaddison.security.jwt.JwtAuthenticationTestUtils.createTokenWithAuthorities;
+import static net.jojoaddison.security.jwt.JwtAuthenticationTestUtils.createTokenWithEmptyAuthorityClaim;
 
 import java.util.Arrays;
 import java.util.stream.Stream;
@@ -104,11 +105,34 @@ class ServicesRouteAuthorizationIT {
         expectForbidden(path, AuthoritiesConstants.USER, AuthoritiesConstants.PATIENT);
     }
 
-    /** A token with no {@code auth} claim at all — the shape a hand-minted probe token takes. */
+    /**
+     * A token with no {@code auth} claim at all — the shape a hand-minted probe token takes.
+     *
+     * <p>Genuinely absent, not empty: {@code createTokenWithAuthorities} omits the claim when given
+     * no authorities, which is a different path through {@code JwtGrantedAuthoritiesConverter} from
+     * the one below. This javadoc named the absent case while the helper wrote {@code ""}, so the
+     * assertion was valid and the case it described was uncovered.
+     */
     @ParameterizedTest
     @MethodSource("serviceRoutes")
-    void aTokenCarryingNoAuthorityIsRefusedEveryServiceRoute(String path) {
+    void aTokenCarryingNoAuthorityClaimIsRefusedEveryServiceRoute(String path) {
         expectForbidden(path);
+    }
+
+    /**
+     * And a token whose {@code auth} claim is present and empty — which is what this gateway's own
+     * {@code TokenProvider} mints for an account holding nothing, since it always writes the claim.
+     */
+    @ParameterizedTest
+    @MethodSource("serviceRoutes")
+    void aTokenCarryingAnEmptyAuthorityClaimIsRefusedEveryServiceRoute(String path) {
+        webTestClient
+            .get()
+            .uri(path)
+            .headers(headers -> headers.setBearerAuth(createTokenWithEmptyAuthorityClaim(jwtKey, "caller")))
+            .exchange()
+            .expectStatus()
+            .isForbidden();
     }
 
     // --- what must keep working -------------------------------------------------------------
@@ -135,6 +159,11 @@ class ServicesRouteAuthorizationIT {
      * (onboarding), the shell/sidebar/tab-bar inbox load on every signed-in page (messaging), and the
      * sidebar user card (the caller's own roster). A rule that refuses any of these passes every unit
      * test in this repository and puts a permanent error banner on an applicant's screen.
+     *
+     * <p>The messaging entries are the three GETs {@code MessagesApiService} fires without a user
+     * asking — {@code conversations} and {@code unread-count} from the shell on sign-in, and
+     * {@code messages/{id}} on every socket frame. Everything else that service can call is a
+     * deliberate action on the messages page, and is refused above.
      */
     @ParameterizedTest
     @ValueSource(
@@ -144,6 +173,7 @@ class ServicesRouteAuthorizationIT {
             "/services/professionalservice/api/onboarding/applications/me",
             "/services/professionalservice/api/messaging/unread-count",
             "/services/professionalservice/api/messaging/conversations",
+            "/services/professionalservice/api/messaging/messages/any-message",
             "/services/professionalservice/api/duty-roster",
         }
     )
@@ -154,10 +184,15 @@ class ServicesRouteAuthorizationIT {
     /**
      * The roster island is the bare GET and nothing else.
      *
-     * <p>{@code /day/{date}} is the one roster read that carries customer names, addresses and phone
-     * numbers, and the service holds it at {@code .authenticated()} — so a wildcard island would hand
-     * a patient token the estate's customer list. {@code /all} and {@code /summary} are administrator
-     * views. Widening the matcher to {@code /duty-roster/**} would fail here.
+     * <p>{@code /day/{date}} is the roster read that serves the stored document with its customer
+     * snapshots, and the service holds it at {@code .authenticated()} — so the narrow matcher is what
+     * keeps a token this gateway did not mint away from that handler. {@code /all} and
+     * {@code /summary} are administrator views. Widening the matcher to {@code /duty-roster/**} would
+     * fail here.
+     *
+     * <p>This is layered defence rather than the last line of it: {@code DutyRosterResource.day()}
+     * resolves the caller through its own profile and answers an empty list to an account that has
+     * none. See {@code SecurityConfiguration} for the residual that leaves, and backlog item 27.
      */
     @ParameterizedTest
     @ValueSource(
@@ -169,6 +204,99 @@ class ServicesRouteAuthorizationIT {
     )
     void theRosterIslandDoesNotExtendToTheReadsBesideIt(String path) {
         expectForbidden(path, AuthoritiesConstants.USER);
+    }
+
+    /**
+     * The messaging island does not extend to the two endpoints beside it that are not own-scoped.
+     *
+     * <p>The island exists for three shell reads. It shipped as {@code /api/messaging/**} on all
+     * methods, which is materially wider than the enumeration that justified it:
+     *
+     * <ul>
+     *   <li>{@code GET /recipients} returns {@code (accountId, displayName, role)} for <b>every</b>
+     *       ACTIVE professional on the estate, unpaginated — and {@code displayName} is the login,
+     *       so it is the valid-login list for this gateway's own {@code /api/authenticate}.
+     *   <li>{@code POST /conversations} injects a message into clinicians' inboxes, including a
+     *       {@code recipientRole} broadcast to every nurse or doctor, with a push notification
+     *       behind it.
+     * </ul>
+     *
+     * <p>Both were reachable by a self-registered {@code ROLE_USER} account and, since this gateway
+     * stamps no {@code iss} claim and validates none, by an hc-patient token — the hole item 19
+     * exists to close, left open in a different place.
+     *
+     * <p>Same shape as {@link #theRosterIslandDoesNotExtendToTheReadsBesideIt}, which is why the
+     * roster island was safe and this one was not.
+     */
+    @ParameterizedTest
+    @ValueSource(
+        strings = {
+            "/services/professionalservice/api/messaging/recipients",
+            // The island's `conversations` matcher is an exact path, not a prefix: a thread's own
+            // messages are own-scoped but are not one of the three the shell fires.
+            "/services/professionalservice/api/messaging/conversations/any-thread/messages",
+        }
+    )
+    void theMessagingIslandDoesNotExtendToTheReadsBesideIt(String path) {
+        expectForbidden(path, AuthoritiesConstants.USER);
+    }
+
+    /**
+     * Starting a conversation is not part of the island. A role-less caller may read the inbox the
+     * shell loads for them; they may not put a message into anybody else's.
+     */
+    @Test
+    void aRoleLessAccountCannotStartAConversation() {
+        webTestClient
+            .post()
+            .uri("/services/professionalservice/api/messaging/conversations")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isForbidden();
+    }
+
+    /**
+     * And neither may a patient token from the sibling stack, which is the same account shape with
+     * one more authority on it.
+     */
+    @Test
+    void aPatientTokenCannotStartAConversation() {
+        webTestClient
+            .post()
+            .uri("/services/professionalservice/api/messaging/conversations")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER, AuthoritiesConstants.PATIENT)))
+            .exchange()
+            .expectStatus()
+            .isForbidden();
+    }
+
+    /**
+     * The island is GET-only on the paths it does name. {@code POST /messages/{id}/read} is a write
+     * against the caller's own row, but it is not one of the three the shell fires, so it falls to
+     * the authority rule like everything else.
+     */
+    @Test
+    void theMessagingIslandIsReadOnly() {
+        webTestClient
+            .post()
+            .uri("/services/professionalservice/api/messaging/messages/any-message/read")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isForbidden();
+    }
+
+    /**
+     * A clinician still reaches all of it. The two endpoints above are refused for want of an
+     * authority, not because the paths stopped being routed — and the four read-only authorities are
+     * covered by {@link #everyClinicalAuthorityAndTheAdministratorReachEveryServiceRoute} on the
+     * clinical routes, so this pins the messaging surface itself.
+     */
+    @ParameterizedTest
+    @MethodSource("clinicalAndAdmin")
+    void everyClinicalAuthorityAndTheAdministratorReachTheRecipientDirectory(String authority) {
+        expectPastAuthorization("/services/professionalservice/api/messaging/recipients", authority);
     }
 
     /** The island is GET-only: a role-less caller may read their roster, never write one. */
