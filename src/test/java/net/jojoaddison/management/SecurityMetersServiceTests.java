@@ -36,9 +36,12 @@ class SecurityMetersServiceTests {
 
         meterRegistry.get(INVALID_TOKENS_METER_EXPECTED_NAME).tag("cause", "malformed").counter();
 
+        // backlog.md item 27: the meter a validate-origin cutover is watched on.
+        meterRegistry.get(INVALID_TOKENS_METER_EXPECTED_NAME).tag("cause", "untrusted-origin").counter();
+
         Collection<Counter> counters = meterRegistry.find(INVALID_TOKENS_METER_EXPECTED_NAME).counters();
 
-        assertThat(counters).hasSize(4);
+        assertThat(counters).hasSize(5);
     }
 
     @Test
@@ -66,5 +69,11 @@ class SecurityMetersServiceTests {
         securityMetersService.trackTokenMalformed();
 
         assertThat(meterRegistry.get(INVALID_TOKENS_METER_EXPECTED_NAME).tag("cause", "malformed").counter().count()).isEqualTo(1);
+
+        assertThat(meterRegistry.get(INVALID_TOKENS_METER_EXPECTED_NAME).tag("cause", "untrusted-origin").counter().count()).isZero();
+
+        securityMetersService.trackTokenUntrustedOrigin();
+
+        assertThat(meterRegistry.get(INVALID_TOKENS_METER_EXPECTED_NAME).tag("cause", "untrusted-origin").counter().count()).isEqualTo(1);
     }
 }

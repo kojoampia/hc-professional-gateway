@@ -270,3 +270,26 @@ application:
       refresh-token-validity-in-days: 60
       # Concurrent live sessions per login; the oldest are revoked past this. 0 disables the cap.
       max-sessions-per-login: 5
+  security:
+    jwt:
+      # Reject tokens minted by hc-admin or hc-patient, which share this signing key and are
+      # therefore accepted here by signature alone (backlog.md item 27).
+      #
+      # OFF BY DEFAULT, AND THAT DEFAULT IS LOAD-BEARING. Turning it on rejects every token that
+      # carries no iss/aud — which is every token issued before TokenProvider started stamping them,
+      # so flipping this on the day of the release signs out every live session at once. Turn it on
+      # only once the claims have been live longer than the longest token lifetime (30 days, the
+      # JHipster remember-me window), and expect the same for professionalservice.
+      validate-origin: false
+      # trusted-issuers and audience are DELIBERATELY NOT SET HERE. ApplicationProperties derives
+      # them from TokenProvider.ISSUER and TokenProvider.AUDIENCE — the constants this gateway mints
+      # with — so the mint side and the check side cannot disagree. Naming them again here would put
+      # the string in two places, and nothing would catch the drift: no test binds this file (the
+      # test classpath REPLACES config/application.yml), so a rename of the constant would leave
+      # every test green while this file still named the old value, and the gateway would reject
+      # 100% of its own tokens on the day validate-origin was turned on.
+      #
+      # To accept a sibling's tokens deliberately, set application.security.jwt.trusted-issuers per
+      # environment — and list hc-professional-gateway in it too: binding a list REPLACES the
+      # default rather than adding to it, so an environment naming only hc-patient-gateway would
+      # stop trusting this gateway's own tokens.
