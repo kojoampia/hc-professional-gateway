@@ -54,6 +54,16 @@ public class TokenOriginValidator implements OAuth2TokenValidator<Jwt> {
 
     private static final Logger LOG = LoggerFactory.getLogger(TokenOriginValidator.class);
 
+    /**
+     * The two refusal descriptions, exposed because {@link SecurityJwtConfiguration} routes a decode failure to a
+     * meter by matching on its message — the only signal Spring gives it — and a literal copied there would be a
+     * second place to change. Nimbus wraps them as
+     * {@code "An error occurred while attempting to decode the Jwt: <description>"}.
+     */
+    public static final String UNTRUSTED_ISSUER_DESCRIPTION = "The token was not issued by a trusted issuer";
+
+    public static final String UNTRUSTED_AUDIENCE_DESCRIPTION = "The token was not issued for this subsystem";
+
     private final List<String> trustedIssuers;
     private final String requiredAudience;
 
@@ -71,16 +81,12 @@ public class TokenOriginValidator implements OAuth2TokenValidator<Jwt> {
         String issuer = token.getClaimAsString(JwtClaimNames.ISS);
         if (issuer == null || !trustedIssuers.contains(issuer)) {
             LOG.warn("Rejected a token whose issuer is not trusted by this gateway");
-            return OAuth2TokenValidatorResult.failure(
-                new OAuth2Error("invalid_issuer", "The token was not issued by a trusted issuer", null)
-            );
+            return OAuth2TokenValidatorResult.failure(new OAuth2Error("invalid_issuer", UNTRUSTED_ISSUER_DESCRIPTION, null));
         }
         List<String> audience = token.getAudience();
         if (audience == null || !audience.contains(requiredAudience)) {
             LOG.warn("Rejected a token that is not addressed to this subsystem");
-            return OAuth2TokenValidatorResult.failure(
-                new OAuth2Error("invalid_audience", "The token was not issued for this subsystem", null)
-            );
+            return OAuth2TokenValidatorResult.failure(new OAuth2Error("invalid_audience", UNTRUSTED_AUDIENCE_DESCRIPTION, null));
         }
         return OAuth2TokenValidatorResult.success();
     }

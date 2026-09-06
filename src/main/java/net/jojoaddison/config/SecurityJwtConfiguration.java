@@ -47,7 +47,10 @@ public class SecurityJwtConfiguration {
         NimbusReactiveJwtDecoder jwtDecoder = NimbusReactiveJwtDecoder.withSecretKey(getSecretKey()).macAlgorithm(JWT_ALGORITHM).build();
         if (jwtProperties.isValidateOrigin()) {
             // Layered on top of the defaults rather than replacing them: setJwtValidator REPLACES, so a bare
-            // validator here would silently drop the expiry check — a worse hole than the one being closed.
+            // validator here would silently drop the expiry check — a worse hole than the one being closed, and one
+            // this gateway would open on every proxied request. Held by
+            // TokenOriginValidationEnabledIT.expiryIsStillCheckedWithTheValidatorAttached, not by this comment:
+            // flattened to a bare validator, that test answers 200 to a token that expired an hour ago.
             jwtDecoder.setJwtValidator(
                 new DelegatingOAuth2TokenValidator<>(
                     JwtValidators.createDefault(),
@@ -70,7 +73,14 @@ public class SecurityJwtConfiguration {
                 return jwtDecoder
                     .decode(token)
                     .doOnError(e -> {
-                        if (e.getMessage().contains("Jwt expired at")) {
+                        if (isUntrustedOrigin(e.getMessage())) {
+                            // Not "Unknown": a token that verified, had not expired, and was minted for another
+                            // product. This is the branch a validate-origin cutover is watched on — every live
+                            // pre-claims session lands here, and a count that does not fall means the issuer string
+                            // is wrong rather than that old tokens are draining.
+                            metersService.trackTokenUntrustedOrigin();
+                            log.warn("Rejected a token minted for another Health Connect product: {}", e.getMessage());
+                        } else if (e.getMessage().contains("Jwt expired at")) {
                             metersService.trackTokenExpired();
                         } else if (e.getMessage().contains("Failed to validate the token")) {
                             metersService.trackTokenInvalidSignature();
@@ -84,7 +94,13 @@ public class SecurityJwtConfiguration {
                         }
                     });
             } catch (Exception e) {
-                if (e.getMessage().contains("An error occurred while attempting to decode the Jwt")) {
+                // Checked FIRST, and that order is load-bearing: Nimbus wraps a validator failure as "An error
+                // occurred while attempting to decode the Jwt: <description>", so the malformed branch below would
+                // otherwise swallow every origin rejection and count it as a broken token.
+                if (isUntrustedOrigin(e.getMessage())) {
+                    metersService.trackTokenUntrustedOrigin();
+                    log.warn("Rejected a token minted for another Health Connect product: {}", e.getMessage());
+                } else if (e.getMessage().contains("An error occurred while attempting to decode the Jwt")) {
                     metersService.trackTokenMalformed();
                 } else if (e.getMessage().contains("Failed to validate the token")) {
                     metersService.trackTokenInvalidSignature();
@@ -113,6 +129,22 @@ public class SecurityJwtConfiguration {
             new ReactiveJwtGrantedAuthoritiesConverterAdapter(grantedAuthoritiesConverter)
         );
         return jwtAuthenticationConverter;
+    }
+
+    /**
+     * Whether a decode failure came from {@link TokenOriginValidator} rather than from signature, expiry or a
+     * malformed token.
+     *
+     * <p>Matching on the message is what every other branch here does — Spring surfaces a validator failure as a
+     * {@code JwtValidationException} whose message is the wrapped {@code OAuth2Error} description and nothing else,
+     * so there is no type to switch on. The two descriptions are constants on the validator so this is not a copy.</p>
+     */
+    private boolean isUntrustedOrigin(String message) {
+        return (
+            message != null &&
+            (message.contains(TokenOriginValidator.UNTRUSTED_ISSUER_DESCRIPTION) ||
+                message.contains(TokenOriginValidator.UNTRUSTED_AUDIENCE_DESCRIPTION))
+        );
     }
 
     private SecretKey getSecretKey() {
