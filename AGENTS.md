@@ -58,16 +58,15 @@ npm run docker:db:up       # MongoDB only
 ./mvnw checkstyle:check    # style gate (checkstyle.xml, includes nohttp)
 npm run lint / lint:fix    # ESLint (tooling/config files)
 npm run prettier:check / prettier:format
-./build-image.sh [version] # WP8: Jib production image hc-professional-gateway; PUSH=1 to push to the registry
 ```
+
+**There is no image build in this repo.** `build-image.sh` was deleted on 2026-09-06 (`../docs/backlog.md` item 34); it drove Jib against `docker-registry.jojoaddison.net`, a registry hostname that is not in use, and no image had been built from it since the deployment bundle was restructured in August. The production image is built from `../deploy/docker/gateway.Dockerfile` with this repo as the build context — by `../deploy/build.sh` on the `local` channel, and by this repo's own `.github/workflows/release.yml` on the `github` channel, which checks out `hc-professional-ci` for the Dockerfile. The pom's `jib-maven-plugin` configuration is left in place because the JHipster generator owns it; nothing in the deployment path calls it. If anyone ever revives it through `npm run java:docker`, the caveat that outlived the script is that `jib-maven-plugin.version` here is still `3.4.0` with no explicit `<mainClass>` in the jib `<container>` block — `api/` hit a wall on exactly that (Jib 3.4.1's bundled ASM cannot read Java 25 class files, major 69) and fixed it by moving to 3.4.6 and setting `<mainClass>${start-class}</mainClass>`.
 
 ### Build toolchain gotchas
 
-The pom targets **release 25**, but the build runs on **JDK 26** (`build-image.sh` pins `JAVA_HOME=/usr/lib/jvm/jdk-26-oracle-x64` when present).
+The pom targets **release 25** and the enforcer's `requireJavaVersion` is `[25,27)`. Build with `JAVA_HOME=/usr/lib/jvm/jdk-25.0.2-oracle-x64` — the workstation's ambient `JAVA_HOME` points at `java-25-openjdk-amd64`, which is a JRE with no `javac`, and an incremental build hides that by finding nothing to compile. Verify a JDK claim with `clean verify`, never an incremental one. 26 stays in range on purpose: `../deploy/docker/gateway.Dockerfile` builds on `maven:3.9-eclipse-temurin-26`, so don't narrow the range without changing that Dockerfile in the same commit.
 
-**Untested caveat:** `jib-maven-plugin.version` here is still `3.4.0` with no explicit `<mainClass>` in the jib `<container>` block. The sibling `api/` repo hit a wall on exactly that — Jib 3.4.1's bundled ASM cannot read Java 25 class files (major 69) — and fixed it by moving to 3.4.6 and setting `<mainClass>${start-class}</mainClass>` in the jib container config. If `./build-image.sh` fails with an ASM/class-reading error, apply the same two changes; don't assume the version difference is deliberate.
-
-Deployment of the whole three-repo stack lives in `../deploy/` at the workspace root (`docker-compose.professional.yml`, runbook in its `README.md`), not here. It invokes this repo's `build-image.sh` as `(cd ../gateway && ./build-image.sh <version>)`. Note that the gateway and `api/` **must share one `JWT_BASE64_SECRET`** — their in-repo prod defaults differ, so a deployed stack never works until it is set; the deployed value lives in the untracked `../deploy/.env`.
+Deployment of the whole three-repo stack lives in `../deploy/` at the workspace root (runbook in its `README.md`), not here — it is its own git repository, `hc-professional-ci`. Note that the gateway and `api/` **must share one `JWT_BASE64_SECRET`** — their in-repo prod defaults differ, so a deployed stack never works until it is set; the deployed value lives in the untracked `../deploy/.env`.
 
 ## Testing
 
