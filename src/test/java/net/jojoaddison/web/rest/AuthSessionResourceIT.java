@@ -13,6 +13,7 @@ import net.jojoaddison.domain.User;
 import net.jojoaddison.repository.RefreshTokenRepository;
 import net.jojoaddison.repository.UserRepository;
 import net.jojoaddison.security.AuthoritiesConstants;
+import net.jojoaddison.security.jwt.TokenProvider;
 import net.jojoaddison.service.RefreshTokenService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -98,6 +99,19 @@ class AuthSessionResourceIT {
             .exchange();
     }
 
+    /**
+     * Reads {@code aud} whichever way it serialized.
+     *
+     * <p>A single-valued {@code aud} is emitted as a bare string rather than a one-element array — RFC 7519 allows
+     * both and Nimbus takes the shorter form — so a test that assumed a list would break the day the audience list
+     * shrank to one, and one that assumed a string breaks today.
+     */
+    @SuppressWarnings("unchecked")
+    private List<String> audienceOf(Map<String, Object> claims) {
+        Object audience = claims.get("aud");
+        return audience instanceof List ? (List<String>) audience : List.of(String.valueOf(audience));
+    }
+
     /** Decodes the payload of a JWS without verifying it — enough to assert the claim set. */
     private Map<String, Object> claimsOf(String jwt) {
         String payload = new String(java.util.Base64.getUrlDecoder().decode(jwt.split("\\.")[1]));
@@ -175,6 +189,12 @@ class AuthSessionResourceIT {
         assertThat(claims.get("sub")).isEqualTo(login);
         assertThat((String) claims.get("auth")).contains(AuthoritiesConstants.USER);
         assertThat(claims).doesNotContainKeys("uid", "sid", "client");
+
+        // The refresh path mints through the same TokenProvider as login, so the origin claims have to be here too.
+        // A mobile session that carried no iss would be signed out the moment origin validation is switched on, and
+        // nothing else would notice — the browser path has its own assertion in AuthenticateControllerIT.
+        assertThat(claims.get("iss")).isEqualTo(TokenProvider.ISSUER);
+        assertThat(audienceOf(claims)).contains(TokenProvider.AUDIENCE);
 
         long ttl = ((Number) claims.get("exp")).longValue() - ((Number) claims.get("iat")).longValue();
         assertThat(ttl).isEqualTo(900L);

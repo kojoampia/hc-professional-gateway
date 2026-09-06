@@ -270,3 +270,18 @@ application:
       refresh-token-validity-in-days: 60
       # Concurrent live sessions per login; the oldest are revoked past this. 0 disables the cap.
       max-sessions-per-login: 5
+  security:
+    jwt:
+      # Reject tokens minted by hc-admin or hc-patient, which share this signing key and are
+      # therefore accepted here by signature alone (backlog.md item 27).
+      #
+      # OFF BY DEFAULT, AND THAT DEFAULT IS LOAD-BEARING. Turning it on rejects every token that
+      # carries no iss/aud — which is every token issued before TokenProvider started stamping them,
+      # so flipping this on the day of the release signs out every live session at once. Turn it on
+      # only once the claims have been live longer than the longest token lifetime (30 days, the
+      # JHipster remember-me window), and expect the same for professionalservice.
+      validate-origin: false
+      # Add a sibling's issuer here to accept its tokens deliberately, rather than by accident.
+      trusted-issuers:
+        - hc-professional-gateway
+      audience: hc-professional

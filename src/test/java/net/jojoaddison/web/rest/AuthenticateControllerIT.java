@@ -2,9 +2,14 @@ package net.jojoaddison.web.rest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.List;
+import java.util.stream.StreamSupport;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.domain.User;
 import net.jojoaddison.repository.UserRepository;
+import net.jojoaddison.security.jwt.TokenProvider;
 import net.jojoaddison.web.rest.vm.LoginVM;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +17,7 @@ import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTest
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -59,6 +65,49 @@ class AuthenticateControllerIT {
             .expectBody()
             .jsonPath("$.id_token")
             .isNotEmpty();
+    }
+
+    @Test
+    void theBrowserTokenCarriesTheOriginClaims() throws Exception {
+        User user = new User();
+        user.setLogin("user-jwt-origin");
+        user.setEmail("user-jwt-origin@example.com");
+        user.setActivated(true);
+        user.setPassword(passwordEncoder.encode("test"));
+        userRepository.save(user).block();
+
+        LoginVM login = new LoginVM();
+        login.setUsername("user-jwt-origin");
+        login.setPassword("test");
+
+        byte[] body = webTestClient
+            .post()
+            .uri("/api/authenticate")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(om.writeValueAsBytes(login))
+            .exchange()
+            .expectStatus()
+            .isOk()
+            .expectBody()
+            .returnResult()
+            .getResponseBody();
+
+        String idToken = om.readTree(body).get("id_token").asString();
+        JsonNode claims = om.readTree(new String(Base64.getUrlDecoder().decode(idToken.split("\\.")[1]), StandardCharsets.UTF_8));
+
+        // Issuer and audience are not validated by default — see TokenOriginValidator — but they have to be present
+        // and correct before validation can be switched on, and this is where a typo would otherwise sit unnoticed
+        // until it locked every user out on the day someone enabled the validators.
+        assertThat(claims.get("iss").asString()).isEqualTo(TokenProvider.ISSUER);
+
+        // A single-valued `aud` serializes as a bare string rather than a one-element array — RFC 7519 allows both,
+        // and Nimbus takes the shorter form. Accept either, so this survives the audience list changing length.
+        JsonNode audience = claims.get("aud");
+        assertThat(audience.isArray() ? audienceValues(audience) : List.of(audience.asString())).containsAll(TokenProvider.AUDIENCES);
+    }
+
+    private static List<String> audienceValues(JsonNode audience) {
+        return StreamSupport.stream(audience.spliterator(), false).map(JsonNode::asString).toList();
     }
 
     @Test
