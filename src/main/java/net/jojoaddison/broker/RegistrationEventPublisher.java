@@ -1,7 +1,9 @@
 package net.jojoaddison.broker;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -12,12 +14,42 @@ import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
 
 /**
- * Publishes {@code registration.created} and the opening {@code onboarding.state} event to
- * {@code hc.professional.registration} for the admin portal
+ * Publishes everything this gateway puts on {@code hc.professional.registration} for the admin
+ * portal: {@code registration.created}, the opening {@code onboarding.state}
  * (professional-onboarding-workflow.md § Domain events, and § "Onboarding state events and the
- * completion contract"). Fired for both self-service registration and administrator-created
- * (invitation) accounts. Records are keyed by accountId; publishing never breaks the registration
- * path — failures are logged, not propagated.
+ * completion contract"), and the two estate-shaped account events
+ * {@link ProfessionalEventType}. Fired for both self-service registration and
+ * administrator-created (invitation) accounts. Every record is keyed by accountId; publishing never
+ * breaks the write path — failures are logged, not propagated.
+ *
+ * <h2>Two envelopes on one topic, on purpose</h2>
+ *
+ * <p>{@code registration.created} and {@code onboarding.state} keep this stack's original
+ * {@code eventType}/{@code actor}/{@code payload} envelope. {@code AccountCreated} and
+ * {@code AccountActivated} use {@link ProfessionalEvent}, which is hc-patient's shape field
+ * for field. <b>The older two are not replaced and not deprecated</b>: they are a published contract
+ * with a live consumer — hc-admin writes a {@code DirectoryLink} from them today — and withdrawing
+ * them to reduce the frame count would break the one thing on this topic that currently works. The
+ * cost is three frames per registration instead of two, all keyed identically, so they share a
+ * partition and arrive in the order they are sent.
+ *
+ * <p><b>A consumer still reading only {@code eventType} will log the new frames as unreadable.</b>
+ * hc-admin's {@code SiblingEventParser} checks for {@code eventType} before it checks the type, so
+ * until it gains a branch for {@code type} it warns once per new frame and applies nothing. That is
+ * noise on somebody else's log rather than a stall — nothing throws, no partition blocks — and it is
+ * the honest price of putting a second shape on a shared topic. Named here so it is found by reading
+ * rather than by wondering.
+ *
+ * <h2>Nothing on this topic is scheduled here</h2>
+ *
+ * <p>{@code StreamBridge.send} resolves a binding, serialises and hands off to the producer, and
+ * none of that is guaranteed non-blocking; {@code UUID.randomUUID()} in the envelope build draws on
+ * SecureRandom and can block on its own. This is a reactive gateway, so <b>every caller wraps the
+ * whole call — build and send — in {@code Mono.fromRunnable(...).subscribeOn(boundedElastic())}</b>
+ * rather than only the send. hc-patient's {@code PatientEventPublisher} schedules inside itself
+ * instead; the difference is deliberate here, because this class's callers publish two or three
+ * events that must reach the partition in a defined order, and self-scheduling each one would leave
+ * that order to the pool.
  */
 @Component
 public class RegistrationEventPublisher {
@@ -61,6 +93,47 @@ public class RegistrationEventPublisher {
         send("registration.created", accountId, payload, login, actor);
     }
 
+    /**
+     * The account exists and can be correlated across the estate.
+     *
+     * <p>Published from both origins, and beside {@code registration.created} rather than instead of
+     * it — see the class comment. {@code data} is hc-patient's three keys and no more: an account
+     * event says who signed up and in what language, and <b>says nothing about what they are
+     * clinically</b>, because at this moment nothing does. See {@link ProfessionalEvent} for
+     * why no version of this event can carry a role or a licence number.
+     *
+     * @param authorities comma-joined and sorted by the caller, matching hc-patient exactly. Sorted
+     *                    so two frames for the same account are byte-identical rather than
+     *                    differing by {@code HashSet} iteration order; joined rather than nested so
+     *                    a consumer reads one field. At registration this is {@code ROLE_USER}
+     *                    alone.
+     * @param activated false for a self-service registration awaiting its email link, and possibly
+     *                  true for an administrator-created account. Carried so a consumer that acts
+     *                  only on usable accounts need not wait for {@code AccountActivated} on a
+     *                  frame that already answers the question.
+     */
+    public void publishAccountCreated(String accountId, String login, String email, String langKey, String authorities, boolean activated) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("authorities", authorities);
+        data.put("langKey", String.valueOf(langKey));
+        data.put("activated", activated);
+        sendAccountEvent(ProfessionalEventType.ACCOUNT_CREATED, accountId, login, email, data);
+    }
+
+    /**
+     * The account is now usable — the activation link was followed and the key consumed.
+     *
+     * <p><b>This moment published nothing at all until item 47</b>, so the one point at which a
+     * clinician's account stops being a pending registration was invisible to the estate.
+     *
+     * <p>{@code activatedAt} duplicates the envelope's {@code occurredAt} and is kept anyway,
+     * because it is what hc-patient's {@code AccountActivated} carries and the value of one shape is
+     * that a reader does not have to check which producer sent a frame before reading it.
+     */
+    public void publishAccountActivated(String accountId, String login, String email) {
+        sendAccountEvent(ProfessionalEventType.ACCOUNT_ACTIVATED, accountId, login, email, Map.of("activatedAt", Instant.now().toString()));
+    }
+
     private void send(String eventType, String accountId, Map<String, Object> payload, String login, String actor) {
         Map<String, Object> envelope = new LinkedHashMap<>();
         envelope.put("eventId", UUID.randomUUID().toString());
@@ -69,13 +142,43 @@ public class RegistrationEventPublisher {
         envelope.put("source", SOURCE);
         envelope.put("actor", actor);
         envelope.put("payload", payload);
+        dispatch(eventType, accountId, envelope, login);
+    }
+
+    private void sendAccountEvent(String type, String accountId, String login, String email, Map<String, Object> data) {
+        ProfessionalEvent event = new ProfessionalEvent(
+            UUID.randomUUID().toString(),
+            type,
+            ProfessionalEvent.VERSION,
+            Instant.now(),
+            SOURCE,
+            new ProfessionalEvent.Subject(normaliseEmail(email), login, accountId),
+            data
+        );
+        dispatch(type, accountId, event, login);
+    }
+
+    /**
+     * One send, one catch, for both envelopes.
+     *
+     * <p>The key is the accountId's bytes on {@link KafkaHeaders#KEY}, which is how this topic has
+     * been keyed since WP3 and is what hc-admin's links are built on. Explicitly UTF-8 where it used
+     * to take the platform default — the value is a Mongo id, so the bytes are the same either way,
+     * and a partition key that depends on a locale is not worth keeping.
+     */
+    private void dispatch(String eventType, String accountId, Object envelope, String login) {
         try {
             streamBridge.send(
                 REGISTRATION_TOPIC_BINDING,
-                MessageBuilder.withPayload(envelope).setHeader(KafkaHeaders.KEY, accountId.getBytes()).build()
+                MessageBuilder.withPayload(envelope).setHeader(KafkaHeaders.KEY, accountId.getBytes(StandardCharsets.UTF_8)).build()
             );
         } catch (RuntimeException e) {
             log.error("Failed to publish {} for {}", eventType, login, e);
         }
+    }
+
+    /** Lowercased and trimmed here so this side and hc-patient's correlate without either remembering to. */
+    private String normaliseEmail(String email) {
+        return email == null ? null : email.trim().toLowerCase(Locale.ROOT);
     }
 }

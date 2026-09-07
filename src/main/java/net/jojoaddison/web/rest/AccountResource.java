@@ -2,7 +2,10 @@ package net.jojoaddison.web.rest;
 
 import jakarta.validation.Valid;
 import java.util.Objects;
+import java.util.stream.Collectors;
 import net.jojoaddison.config.Constants;
+import net.jojoaddison.domain.Authority;
+import net.jojoaddison.domain.User;
 import net.jojoaddison.repository.UserRepository;
 import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.LoginAvailabilityService;
@@ -80,30 +83,74 @@ public class AccountResource {
             .registerUser(managedUserVM, managedUserVM.getPassword())
             .doOnSuccess(mailService::sendActivationEmail)
             .flatMap(
-                // StreamBridge does blocking I/O (binder init) - keep it off the event loop
-                user ->
-                    Mono.fromRunnable(
-                        () ->
-                            registrationEventPublisher.publishRegistrationCreated(
-                                user.getId(),
-                                user.getLogin(),
-                                user.getEmail(),
-                                user.getLangKey(),
-                                net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_SELF_SERVICE,
-                                user.getLogin()
-                            )
-                    )
-                        // Same runnable, same scheduler: onboarding starts the moment the account
-                        // does, and both events are keyed by accountId on one topic so the admin
-                        // portal reads them in order.
-                        .then(
-                            Mono.fromRunnable(
-                                () -> registrationEventPublisher.publishOnboardingInProgress(user.getId(), user.getLogin(), user.getLogin())
-                            )
-                        )
-                        .subscribeOn(Schedulers.boundedElastic())
+                user -> publishNewAccount(user, net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_SELF_SERVICE, user.getLogin())
             )
             .then();
+    }
+
+    /**
+     * The three frames a new account puts on {@code hc.professional.registration}, in order.
+     *
+     * <p>{@code AccountCreated} leads — it is the estate-shaped fact, the one hc-patient's gateway
+     * publishes for the same moment — and {@code registration.created} and {@code onboarding.state}
+     * continue the story it opens in this stack's own envelope. All three are kept because the
+     * older two have a live consumer; see {@code RegistrationEventPublisher}'s class comment.
+     *
+     * <p><b>One runnable, one scheduler hop, and the whole build rather than only the send.</b>
+     * StreamBridge does blocking I/O resolving a binding, and {@code UUID.randomUUID()} draws on
+     * SecureRandom and can block on its own, while every caller here is a handler on a Netty event
+     * loop. And the three share the accountId partition key, so the order they are <em>sent</em> in
+     * is the order a consumer reads them in — scheduling them separately would leave that to the
+     * pool.
+     *
+     * <p><b>The error arm is not redundant.</b> {@code RegistrationEventPublisher} catches its own
+     * {@code RuntimeException}s, but this chain is subscribed <em>into the request</em> — unlike
+     * activation's, because the three frames have to be ordered — so anything that escaped the
+     * publisher would turn a successful registration into a 500 for somebody whose account already
+     * exists and whose activation email has already gone. The account is the write path; the events
+     * are not.
+     */
+    private Mono<Void> publishNewAccount(User user, String origin, String actor) {
+        return Mono.fromRunnable(() -> {
+            registrationEventPublisher.publishAccountCreated(
+                user.getId(),
+                user.getLogin(),
+                user.getEmail(),
+                user.getLangKey(),
+                joinedAuthorities(user),
+                user.isActivated()
+            );
+            registrationEventPublisher.publishRegistrationCreated(
+                user.getId(),
+                user.getLogin(),
+                user.getEmail(),
+                user.getLangKey(),
+                origin,
+                actor
+            );
+            registrationEventPublisher.publishOnboardingInProgress(user.getId(), user.getLogin(), actor);
+        })
+            .subscribeOn(Schedulers.boundedElastic())
+            .doOnError(e -> log.warn("Could not announce the new account {} — the account is unaffected", user.getLogin(), e))
+            .onErrorComplete()
+            .then();
+    }
+
+    /**
+     * The account's authorities as {@code AccountCreated} carries them: comma-joined and sorted.
+     *
+     * <p>Sorted so two frames for one account are byte-identical rather than differing by
+     * {@code HashSet} iteration order, and joined rather than nested because that is the shape
+     * hc-patient publishes and hc-admin's parser already splits on the comma. At registration the
+     * value is {@code ROLE_USER} alone — the nine clinical authorities are granted later, by an
+     * administrator, and no account event can say what a clinician is.
+     *
+     * <p>Package-private because {@code UserResource}'s invitation path sends the same field on the
+     * same event and must not derive it a second way — two derivations of one rule disagreeing is a
+     * defect this estate has already paid for more than once.
+     */
+    static String joinedAuthorities(User user) {
+        return user.getAuthorities().stream().map(Authority::getName).sorted().collect(Collectors.joining(","));
     }
 
     /**
@@ -138,6 +185,11 @@ public class AccountResource {
     /**
      * {@code GET  /activate} : activate the registered user.
      *
+     * <p><b>This published nothing at all until backlog.md item 47</b> — it activated the user and
+     * returned — so the one moment at which a clinician's account stops being a pending registration
+     * and becomes usable was invisible to the whole estate. It now emits {@code AccountActivated},
+     * the second of the two account events hc-patient's gateway publishes for the same two moments.
+     *
      * @param key the activation key.
      * @throws RuntimeException {@code 500 (Internal Server Error)} if the user couldn't be activated.
      */
@@ -146,7 +198,31 @@ public class AccountResource {
         return userService
             .activateRegistration(key)
             .switchIfEmpty(Mono.error(new AccountResourceException("No user was found for this activation key")))
+            .doOnSuccess(this::publishActivation)
             .then();
+    }
+
+    /**
+     * Announces the activation without the caller waiting on it.
+     *
+     * <p><b>Fire-and-forget, unlike registration's, and the difference is deliberate.</b> The
+     * account is already activated by the time this runs — the key is consumed and the row is
+     * saved — so the only thing a broker round trip could still change is how long the person
+     * stares at the activation card, and how the request fails if Kafka is unreachable. Neither is
+     * a price worth paying for an event. Registration's three frames are subscribed into its chain
+     * because they must reach the partition in a fixed order; this one has nothing to order against.
+     *
+     * <p>Off the event loop for the reason {@code RegistrationEventPublisher}'s class comment gives:
+     * the whole build and send, not only the send. Errors are logged and swallowed here <em>and</em>
+     * inside the publisher — belt and braces on the one path whose failure must never reach an
+     * account holder.
+     */
+    private void publishActivation(User user) {
+        Mono.fromRunnable(() -> registrationEventPublisher.publishAccountActivated(user.getId(), user.getLogin(), user.getEmail()))
+            .subscribeOn(Schedulers.boundedElastic())
+            .doOnError(e -> log.warn("Could not publish AccountActivated for {} — the account is activated regardless", user.getLogin(), e))
+            .onErrorComplete()
+            .subscribe();
     }
 
     /**
