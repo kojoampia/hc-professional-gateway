@@ -89,15 +89,17 @@ public class RefreshTokenService {
     /**
      * Issues the first token of a new family, after a successful password login.
      *
+     * @param uid the gateway {@code User.id}, for the {@code uid} claim; null when the caller could
+     *            not resolve one, in which case the access token carries no such claim
      * @param authorities pre-joined authority string, as it will appear in the {@code auth} claim
      */
-    public Mono<TokenPair> issue(String login, String authorities, String client, String deviceId, String deviceName) {
+    public Mono<TokenPair> issue(String login, String uid, String authorities, String client, String deviceId, String deviceName) {
         Instant now = Instant.now();
         String familyId = randomToken();
 
         return capSessions(login, now)
             .then(Mono.defer(() -> persistNewToken(login, familyId, client, deviceId, deviceName, now)))
-            .map(secret -> toPair(login, authorities, secret));
+            .map(secret -> toPair(login, uid, authorities, secret));
     }
 
     /**
@@ -222,7 +224,9 @@ public class RefreshTokenService {
                 }
 
                 // Authorities are re-read on every rotation, so a role change reaches the device
-                // within one access-token lifetime without any push from the server.
+                // within one access-token lifetime without any push from the server. The uid comes
+                // off the same freshly-read row, which is why rotation needs no stored copy of it:
+                // a session that predates the claim starts carrying it on its next exchange.
                 String authorities = user
                     .getAuthorities()
                     .stream()
@@ -245,7 +249,7 @@ public class RefreshTokenService {
                     stored.setLastUsedIp(remoteIp);
                     // Keep the spent row around briefly so a replay is still detectable.
                     stored.setExpiresAt(now.plus(REVOKED_RETENTION));
-                    return refreshTokenRepository.save(stored).thenReturn(toPair(stored.getLogin(), authorities, successor));
+                    return refreshTokenRepository.save(stored).thenReturn(toPair(stored.getLogin(), user.getId(), authorities, successor));
                 });
             });
     }
@@ -271,9 +275,9 @@ public class RefreshTokenService {
         return refreshTokenRepository.save(token).thenReturn(new NewToken(tokenId, tokenId + "." + secret));
     }
 
-    private TokenPair toPair(String login, String authorities, NewToken newToken) {
+    private TokenPair toPair(String login, String uid, String authorities, NewToken newToken) {
         Duration validity = accessTokenValidity();
-        String accessToken = tokenProvider.createAccessToken(login, authorities, validity);
+        String accessToken = tokenProvider.createAccessToken(login, uid, authorities, validity);
         return new TokenPair(accessToken, newToken.presentable(), validity.toSeconds());
     }
 

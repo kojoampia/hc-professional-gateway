@@ -188,7 +188,11 @@ class AuthSessionResourceIT {
         assertThat(claims).containsKeys("sub", "iat", "exp", "auth");
         assertThat(claims.get("sub")).isEqualTo(login);
         assertThat((String) claims.get("auth")).contains(AuthoritiesConstants.USER);
-        assertThat(claims).doesNotContainKeys("uid", "sid", "client");
+        // `uid` moved from this list to the assertion below on 2026-09-07 (backlog.md item 48).
+        // `sid` and `client` are still deliberately absent: a session id would make the access token
+        // stateful and the client kind is nobody downstream's business.
+        assertThat(claims).doesNotContainKeys("sid", "client");
+        assertThat(claims.get(TokenProvider.UID_KEY)).isEqualTo(userRepository.findOneByLogin(login).block().getId());
 
         // The refresh path mints through the same TokenProvider as login, so the origin claims have to be here too.
         // A mobile session that carried no iss would be signed out the moment origin validation is switched on, and
@@ -219,6 +223,30 @@ class AuthSessionResourceIT {
 
         // The successor works...
         postRefresh(second).expectStatus().isOk();
+    }
+
+    /**
+     * The {@code uid} claim survives a rotation, which is the half that is easy to lose.
+     *
+     * <p>Login and refresh mint through the same {@code TokenProvider}, but they reach it by
+     * different routes — login carries the id on the principal, rotation re-reads the user row — so a
+     * change that filled the claim on one path only would still pass every login assertion here.
+     * A mobile session lives for as long as its refresh family, so losing it on rotation would mean
+     * a device that authenticates for weeks and never once identifies its account (backlog.md item 48).
+     */
+    @Test
+    void rotationMintsTheUidClaimTooRatherThanOnlyLoginDoing() {
+        String uid = userRepository.findOneByLogin(login).block().getId();
+        String first = (String) loginAs("mobile-ios").get("refresh_token");
+
+        Map<String, Object> rotated = postRefresh(first)
+            .expectStatus()
+            .isOk()
+            .expectBody(new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() {})
+            .returnResult()
+            .getResponseBody();
+
+        assertThat(claimsOf((String) rotated.get("id_token")).get(TokenProvider.UID_KEY)).isEqualTo(uid);
     }
 
     @Test

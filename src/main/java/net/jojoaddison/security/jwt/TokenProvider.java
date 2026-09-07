@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
+import net.jojoaddison.security.AccountUserDetails;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.jwt.JwsHeader;
@@ -38,6 +39,15 @@ import org.springframework.stereotype.Component;
  * every token in flight when this shipped lacks them, so a decoder that demanded them would sign out
  * every live session at once. {@link net.jojoaddison.config.TokenOriginValidator} does the checking
  * and is off until {@code application.security.jwt.validate-origin=true}.
+ *
+ * <p><strong>It gained {@code uid} on 2026-09-07</strong> ({@code backlog.md} item 48), for the same
+ * sequencing reason and on the same 30-day clock. {@code professionalservice} has no user store, so
+ * until this claim existed the only identifier crossing the boundary was {@code sub} — a login —
+ * while this gateway keys its own account events on {@code User.id}. The two producers on
+ * {@code hc.professional.registration} therefore named one clinician differently, which is what item
+ * 48 was opened for. <b>Nothing may depend on the claim being present</b> until it has been live
+ * longer than the remember-me token lifetime (30 days); {@code api/} reads it as an optional extra
+ * beside the login and never in place of it.
  */
 @Component
 public class TokenProvider {
@@ -72,6 +82,17 @@ public class TokenProvider {
      */
     public static final List<String> AUDIENCES = List.of(AUDIENCE, "hc-patient", "hc-admin");
 
+    /**
+     * The claim carrying {@code User.id} — the account identifier that survives a login being
+     * edited, and the value this gateway keys its account events on.
+     *
+     * <p>Named {@code uid} rather than reusing {@code sub} because {@code sub} is a published
+     * contract: {@code professionalservice} resolves the caller by matching it against
+     * {@code Profile.accountId}, every audit row in that database holds it, and changing what it
+     * means would orphan all of them at once. This sits beside it instead.
+     */
+    public static final String UID_KEY = "uid";
+
     private final JwtEncoder jwtEncoder;
 
     public TokenProvider(JwtEncoder jwtEncoder) {
@@ -80,15 +101,20 @@ public class TokenProvider {
 
     /** Mints from an authenticated principal — the login path. */
     public String createAccessToken(Authentication authentication, Duration validity) {
-        return createAccessToken(authentication.getName(), authorityString(authentication.getAuthorities()), validity);
+        return createAccessToken(
+            authentication.getName(),
+            uidOf(authentication),
+            authorityString(authentication.getAuthorities()),
+            validity
+        );
     }
 
     /** Mints from a login plus a pre-joined authority string — the refresh path. */
-    public String createAccessToken(String login, String authorities, Duration validity) {
+    public String createAccessToken(String login, String uid, String authorities, Duration validity) {
         Instant now = Instant.now();
 
         // @formatter:off
-        JwtClaimsSet claims = JwtClaimsSet.builder()
+        JwtClaimsSet.Builder claims = JwtClaimsSet.builder()
             .issuedAt(now)
             .expiresAt(now.plus(validity))
             .subject(login)
@@ -96,12 +122,32 @@ public class TokenProvider {
             // Both login and refresh mint through here, so both carry them or neither does.
             .issuer(ISSUER)
             .audience(AUDIENCES)
-            .claim(AUTHORITIES_KEY, authorities)
-            .build();
+            .claim(AUTHORITIES_KEY, authorities);
         // @formatter:on
 
+        // Omitted rather than written null when the account has no id. A claim that is present and
+        // empty is a value a reader can compare against stored data and match something; an absent
+        // one is the only shape that says "not known" without ambiguity. api/ treats both blank and
+        // absent as absent for the same reason, but only one of them can be got wrong here.
+        if (uid != null && !uid.isBlank()) {
+            claims.claim(UID_KEY, uid);
+        }
+
         JwsHeader jwsHeader = JwsHeader.with(JWT_ALGORITHM).build();
-        return this.jwtEncoder.encode(JwtEncoderParameters.from(jwsHeader, claims)).getTokenValue();
+        return this.jwtEncoder.encode(JwtEncoderParameters.from(jwsHeader, claims.build())).getTokenValue();
+    }
+
+    /**
+     * The gateway {@code User.id} behind an authentication, or null when the principal does not
+     * carry one.
+     *
+     * <p>Null is reachable and is not a defect: a test principal, or any {@link Authentication}
+     * built from something other than {@link AccountUserDetails}, has no id to give. The token then
+     * carries no {@code uid} claim, which is exactly the shape every token minted before 2026-09-07
+     * has — so the absent case is the one already on the wire and must stay harmless.
+     */
+    public static String uidOf(Authentication authentication) {
+        return authentication != null && authentication.getPrincipal() instanceof AccountUserDetails account ? account.getUid() : null;
     }
 
     public String authorityString(Collection<? extends GrantedAuthority> authorities) {
