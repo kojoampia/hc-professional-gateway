@@ -42,7 +42,10 @@ import org.springframework.test.web.reactive.server.WebTestClient;
  * <p>The refused set is <b>not</b> derived, and cannot be: the point of these cases is that a caller
  * holding {@code ROLE_USER} — which is every applicant here, and every patient in the sibling stack,
  * since hc-patient grants it alongside {@code ROLE_PATIENT} — is refused. There is no array to read
- * that from; naming the authority is the assertion.
+ * that from; naming the authority is the assertion. {@code ROLE_ANGEL} joined that set on 2026-09-06
+ * for the same reason, and its cases must stay named for a sharper one: derivation covers whatever
+ * is <em>in</em> the array, so an authority removed from it loses its coverage in the same commit
+ * and the suite stays green either way.
  *
  * @see AuthoritiesConstants#CLINICAL_AND_ADMIN
  */
@@ -88,6 +91,62 @@ class ServicesRouteAuthorizationIT {
     @MethodSource("serviceRoutes")
     void aRoleLessAccountIsRefusedEveryServiceRoute(String path) {
         expectForbidden(path, AuthoritiesConstants.USER);
+    }
+
+    /**
+     * An angel is not a clinician, and this is the case that says so.
+     *
+     * <p>The estate decided on 2026-09-06 (docs/backlog.md item 30) that {@code ROLE_ANGEL} is a
+     * grant over one named patient rather than a standing capability: hc-patient records it as an
+     * {@code ACTIVE CareDelegation} and re-reads it per request, so a revocation takes effect on the
+     * next call. {@code CLINICAL_AND_ADMIN} named it until then, and a role check cannot express any
+     * of that — every angel in the estate held unrestricted cross-patient read.
+     *
+     * <p>Named rather than derived, and that is the point. {@link #clinicalAndAdmin()} reads the
+     * array, so removing an authority from it silently removes its coverage too — the admitted-set
+     * test would go from ten names to nine and stay green. Only an assertion that spells
+     * {@code ROLE_ANGEL} fails when somebody puts it back.
+     */
+    @ParameterizedTest
+    @MethodSource("serviceRoutes")
+    void anAngelIsRefusedEveryServiceRoute(String path) {
+        expectForbidden(path, AuthoritiesConstants.ANGEL);
+    }
+
+    /**
+     * And an angel who also holds {@code ROLE_USER} — which every account created through this
+     * gateway does, so it is the shape a real angel token actually takes.
+     */
+    @ParameterizedTest
+    @MethodSource("serviceRoutes")
+    void anAngelHoldingTheBaseUserAuthorityIsRefusedEveryServiceRoute(String path) {
+        expectForbidden(path, AuthoritiesConstants.USER, AuthoritiesConstants.ANGEL);
+    }
+
+    /** Nor the recipient directory, which is the estate's valid-login list. */
+    @Test
+    void anAngelIsRefusedTheRecipientDirectory() {
+        expectForbidden("/services/professionalservice/api/messaging/recipients", AuthoritiesConstants.ANGEL);
+    }
+
+    /**
+     * What an angel keeps: the three islands, which sit above the authority rule and are what make
+     * this a narrowing rather than a lock-out. An angel signs in, completes onboarding, reads the
+     * inbox the shell loads for them, and sees their own roster — exactly as a role-less applicant
+     * does. Losing these would turn a scope fix into an account that cannot use the portal at all.
+     */
+    @ParameterizedTest
+    @ValueSource(
+        strings = {
+            "/services/professionalservice/api/onboarding",
+            "/services/professionalservice/api/onboarding/progress",
+            "/services/professionalservice/api/messaging/unread-count",
+            "/services/professionalservice/api/messaging/conversations",
+            "/services/professionalservice/api/duty-roster",
+        }
+    )
+    void anAngelStillReachesTheThreeIslands(String path) {
+        expectPastAuthorization(path, AuthoritiesConstants.ANGEL);
     }
 
     /**
@@ -138,9 +197,12 @@ class ServicesRouteAuthorizationIT {
     // --- what must keep working -------------------------------------------------------------
 
     /**
-     * All ten, on all three routes. The four read-only authorities — carer, angel, chemist,
-     * technician — are the ones a rule copied from {@code CLINICAL_MUTATION} would have locked out of
-     * reads, so they are asserted here rather than assumed.
+     * All nine, on all three routes. The three read-only authorities — carer, chemist, technician —
+     * are the ones a rule copied from {@code CLINICAL_MUTATION} would have locked out of reads, so
+     * they are asserted here rather than assumed.
+     *
+     * <p>Nine and not ten since 2026-09-06: {@code ROLE_ANGEL} left the array, and
+     * {@link #anAngelIsRefusedEveryServiceRoute} is the case that holds it out by name.
      */
     @ParameterizedTest
     @MethodSource("clinicalAndAdminOnEveryRoute")
