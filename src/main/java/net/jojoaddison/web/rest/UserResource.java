@@ -146,25 +146,39 @@ public class UserResource {
                 net.jojoaddison.security.SecurityUtils.getCurrentUserLogin()
                     .defaultIfEmpty("system")
                     .flatMap(
+                        // The same three frames self-service registration sends, with the
+                        // invitation origin and the administrator as the actor. AccountCreated
+                        // leads; see AccountResource.publishNewAccount for why one runnable and one
+                        // scheduler hop, and RegistrationEventPublisher for why the older two stay.
+                        //
                         // StreamBridge does blocking I/O (binder init) - keep it off the event loop
                         actor ->
-                            reactor.core.publisher.Mono.fromRunnable(
-                                () ->
-                                    registrationEventPublisher.publishRegistrationCreated(
-                                        user.getId(),
-                                        user.getLogin(),
-                                        user.getEmail(),
-                                        user.getLangKey(),
-                                        net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_INVITATION,
-                                        actor
-                                    )
-                            )
-                                .then(
-                                    reactor.core.publisher.Mono.fromRunnable(
-                                        () -> registrationEventPublisher.publishOnboardingInProgress(user.getId(), user.getLogin(), actor)
-                                    )
-                                )
+                            reactor.core.publisher.Mono.fromRunnable(() -> {
+                                registrationEventPublisher.publishAccountCreated(
+                                    user.getId(),
+                                    user.getLogin(),
+                                    user.getEmail(),
+                                    user.getLangKey(),
+                                    AccountResource.joinedAuthorities(user),
+                                    user.isActivated()
+                                );
+                                registrationEventPublisher.publishRegistrationCreated(
+                                    user.getId(),
+                                    user.getLogin(),
+                                    user.getEmail(),
+                                    user.getLangKey(),
+                                    net.jojoaddison.broker.RegistrationEventPublisher.ORIGIN_INVITATION,
+                                    actor
+                                );
+                                registrationEventPublisher.publishOnboardingInProgress(user.getId(), user.getLogin(), actor);
+                            })
                                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                                // Subscribed into the request so the three frames stay ordered, so
+                                // the error arm is what keeps an unreachable broker from turning a
+                                // created account into a 500. The publisher catches its own
+                                // RuntimeExceptions; this catches whatever it did not.
+                                .doOnError(e -> log.warn("Could not announce the invited account {}", user.getLogin(), e))
+                                .onErrorComplete()
                     )
                     .thenReturn(user))
             .map(user -> {
