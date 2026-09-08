@@ -3,6 +3,7 @@ package net.jojoaddison.broker;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -127,9 +128,37 @@ class RegistrationEventPublisherTest {
         assertThat(event.source()).isEqualTo("hc-professional-gateway");
         // Lowercased and trimmed here rather than trusted from the caller, so this side and
         // hc-patient's correlate on the same string.
-        assertThat(event.subject()).isEqualTo(new ProfessionalEvent.Subject("ama@localhost", "ama.serwaa", "user-42"));
-        assertThat(event.data()).containsOnlyKeys("authorities", "langKey", "activated");
-        assertThat(event.data()).containsEntry("authorities", "ROLE_USER").containsEntry("langKey", "en").containsEntry("activated", false);
+        assertThat(event.subject()).isEqualTo(new ProfessionalEvent.Subject("ama@localhost", "user-42"));
+        assertThat(event.data()).containsOnlyKeys("username", "authorities", "langKey", "activated");
+        assertThat(event.data())
+            .containsEntry("username", "ama.serwaa")
+            .containsEntry("authorities", "ROLE_USER")
+            .containsEntry("langKey", "en")
+            .containsEntry("activated", false);
+    }
+
+    /**
+     * hc-admin's directory is specified to display the professional's username, and this is the only
+     * frame that carries it — the profile half publishes identifiers only. It rode in the subject
+     * until the join was narrowed to {@code accountId} alone, and moved here rather than being
+     * dropped: without it hc-admin has a column it must show and nothing to put in it.
+     *
+     * <p>It is <b>data, not a key</b>. Nothing correlates on it, and a login can be edited in user
+     * management without orphaning anything.
+     */
+    @Test
+    void theAccountFramesCarryTheUsernameForDisplayAndNotAsAJoinKey() {
+        publisher.publishAccountCreated("user-42", "ama.serwaa", "ama@localhost", "en", "ROLE_USER", false);
+        assertThat(captureAccountEvent().data()).containsEntry("username", "ama.serwaa");
+
+        reset(streamBridge);
+
+        // Repeated on activation rather than assumed from the earlier frame: at-least-once delivery
+        // is not at-least-once ordering, so a consumer can legitimately see this one first.
+        publisher.publishAccountActivated("user-42", "ama.serwaa", "ama@localhost");
+        ProfessionalEvent activated = captureAccountEvent();
+        assertThat(activated.data()).containsEntry("username", "ama.serwaa");
+        assertThat(activated.subject().accountId()).isEqualTo("user-42");
     }
 
     /**
@@ -162,7 +191,7 @@ class RegistrationEventPublisherTest {
         assertThat(event.type()).isEqualTo("AccountActivated");
         assertThat(event.version()).isEqualTo(1);
         assertThat(event.subject().accountId()).isEqualTo("user-42");
-        assertThat(event.data()).containsOnlyKeys("activatedAt");
+        assertThat(event.data()).containsOnlyKeys("activatedAt", "username");
     }
 
     /**

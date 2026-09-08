@@ -114,6 +114,12 @@ public class RegistrationEventPublisher {
      */
     public void publishAccountCreated(String accountId, String login, String email, String langKey, String authorities, boolean activated) {
         Map<String, Object> data = new LinkedHashMap<>();
+        // The username hc-admin's directory displays. It rode in the subject until the join was
+        // narrowed to accountId alone; it belongs here instead, where it reads as what it is —
+        // display data, not an identifier anything correlates on. Dropping it entirely would leave
+        // hc-admin with a column it is specified to show and no value to put in it, and this is the
+        // only frame that carries it: the profile half publishes identifiers only.
+        data.put("username", login);
         data.put("authorities", authorities);
         data.put("langKey", String.valueOf(langKey));
         data.put("activated", activated);
@@ -131,7 +137,15 @@ public class RegistrationEventPublisher {
      * that a reader does not have to check which producer sent a frame before reading it.
      */
     public void publishAccountActivated(String accountId, String login, String email) {
-        sendAccountEvent(ProfessionalEventType.ACCOUNT_ACTIVATED, accountId, login, email, Map.of("activatedAt", Instant.now().toString()));
+        sendAccountEvent(
+            ProfessionalEventType.ACCOUNT_ACTIVATED,
+            accountId,
+            login,
+            email,
+            // username repeated rather than assumed: at-least-once delivery is not
+            // at-least-once *ordering*, so a consumer can see this frame first.
+            Map.of("activatedAt", Instant.now().toString(), "username", login)
+        );
     }
 
     private void send(String eventType, String accountId, Map<String, Object> payload, String login, String actor) {
@@ -152,7 +166,12 @@ public class RegistrationEventPublisher {
             ProfessionalEvent.VERSION,
             Instant.now(),
             SOURCE,
-            new ProfessionalEvent.Subject(normaliseEmail(email), login, accountId),
+            // accountId ONLY — the gateway's User.id, and the estate's sole correlation key for a
+            // professional. hc-admin's SiblingDomainEvent has said so all along: "the correlation
+            // key: lowercased email for a patient, accountId for a professional." The login used to
+            // ride here beside it; two join keys is two answers to "is this the same clinician", and
+            // they diverge the moment a login is edited in user management.
+            new ProfessionalEvent.Subject(normaliseEmail(email), accountId),
             data
         );
         dispatch(type, accountId, event, login);
