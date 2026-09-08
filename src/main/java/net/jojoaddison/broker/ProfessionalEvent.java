@@ -66,5 +66,18 @@ public record ProfessionalEvent(
      *              so it is not new exposure — but nothing beyond these three identifiers belongs
      *              on this stream.
      */
-    public record Subject(String email, String login, String accountId) {}
+    /**
+     * Who the event is about, named by <b>one</b> identifier.
+     *
+     * <p><b>{@code accountId} is the gateway's {@code User.id}, and it is the only join.</b> This
+     * record carried a {@code login} beside it until 2026-09-08, and a consumer could correlate on
+     * either. That is what made it wrong: two join keys is two answers to "is this the same
+     * clinician", and they disagree the moment a login is edited in user management — which orphans
+     * every row keyed on the old one. The estate's decision is that the account identifier is the
+     * ultimate join and nothing else is.
+     *
+     * <p>{@code email} stays for the shape hc-patient's {@code PatientEvent.Subject} established and
+     * is null from the service half by the identifiers-only rule.
+     */
+    public record Subject(String email, String accountId) {}
 }

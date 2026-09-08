@@ -49,7 +49,14 @@ public class DomainUserDetailsService implements ReactiveUserDetailsService {
         return login != null && login.indexOf('@') > 0 && login.indexOf('@') == login.lastIndexOf('@');
     }
 
-    private org.springframework.security.core.userdetails.User createSpringSecurityUser(String lowercaseLogin, User user) {
+    /**
+     * Builds the principal, carrying {@code User.id} on it.
+     *
+     * <p>The id is put on the principal rather than looked up again at mint time because this is the
+     * only place in the login path that has the {@code User} document open. See
+     * {@link AccountUserDetails}.
+     */
+    private AccountUserDetails createSpringSecurityUser(String lowercaseLogin, User user) {
         if (!user.isActivated()) {
             throw new UserNotActivatedException("User " + lowercaseLogin + " was not activated");
         }
@@ -59,6 +66,6 @@ public class DomainUserDetailsService implements ReactiveUserDetailsService {
             .map(Authority::getName)
             .map(SimpleGrantedAuthority::new)
             .toList();
-        return new org.springframework.security.core.userdetails.User(user.getLogin(), user.getPassword(), grantedAuthorities);
+        return new AccountUserDetails(user.getLogin(), user.getPassword(), user.getId(), grantedAuthorities);
     }
 }

@@ -87,7 +87,14 @@ public class AuthenticateController {
     private Mono<ResponseEntity<JWTToken>> mobileResponse(Authentication authentication, LoginVM login) {
         String authorities = tokenProvider.authorityString(authentication.getAuthorities());
         return refreshTokenService
-            .issue(authentication.getName(), authorities, login.getClient(), login.getDeviceId(), login.getDeviceName())
+            .issue(
+                authentication.getName(),
+                TokenProvider.uidOf(authentication),
+                authorities,
+                login.getClient(),
+                login.getDeviceId(),
+                login.getDeviceName()
+            )
             .map(pair -> {
                 HttpHeaders httpHeaders = new HttpHeaders();
                 httpHeaders.setBearerAuth(pair.accessToken());

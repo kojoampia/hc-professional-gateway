@@ -106,6 +106,48 @@ class AuthenticateControllerIT {
         assertThat(audience.isArray() ? audienceValues(audience) : List.of(audience.asString())).containsAll(TokenProvider.AUDIENCES);
     }
 
+    /**
+     * The browser token carries {@code uid} = {@code User.id}, and {@code sub} is still the login.
+     *
+     * <p>Both halves matter. {@code professionalservice} resolves the caller by matching {@code sub}
+     * against {@code Profile.accountId} and every audit row in that database holds the same string,
+     * so a change that moved {@code User.id} into {@code sub} would orphan all of them at once —
+     * this asserts the claim was <em>added beside</em> the subject rather than substituted for it
+     * (backlog.md item 48).
+     */
+    @Test
+    void theBrowserTokenCarriesTheAccountUidBesideTheLogin() throws Exception {
+        User user = new User();
+        user.setLogin("user-jwt-uid");
+        user.setEmail("user-jwt-uid@example.com");
+        user.setActivated(true);
+        user.setPassword(passwordEncoder.encode("test"));
+        String uid = userRepository.save(user).block().getId();
+
+        LoginVM login = new LoginVM();
+        login.setUsername("user-jwt-uid");
+        login.setPassword("test");
+
+        byte[] body = webTestClient
+            .post()
+            .uri("/api/authenticate")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(om.writeValueAsBytes(login))
+            .exchange()
+            .expectStatus()
+            .isOk()
+            .expectBody()
+            .returnResult()
+            .getResponseBody();
+
+        String idToken = om.readTree(body).get("id_token").asString();
+        JsonNode claims = om.readTree(new String(Base64.getUrlDecoder().decode(idToken.split("\\.")[1]), StandardCharsets.UTF_8));
+
+        assertThat(uid).isNotBlank().isNotEqualTo("user-jwt-uid");
+        assertThat(claims.get(TokenProvider.UID_KEY).asString()).isEqualTo(uid);
+        assertThat(claims.get("sub").asString()).isEqualTo("user-jwt-uid");
+    }
+
     private static List<String> audienceValues(JsonNode audience) {
         return StreamSupport.stream(audience.spliterator(), false).map(JsonNode::asString).toList();
     }
