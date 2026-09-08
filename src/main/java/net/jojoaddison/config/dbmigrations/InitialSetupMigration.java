@@ -82,16 +82,21 @@ public class InitialSetupMigration implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        // Authorities first, and unconditionally. They are a cross-repo invariant (the nine clinical
-        // roles), so each must exist even when the demo account that would once have introduced it
-        // already does. They used to be created inside the arguments to saveUserIfMissing below;
+        // Authorities first, and unconditionally. They are a cross-repo invariant (the eight clinical
+        // disciplines), so each must exist even when the demo account that would once have introduced
+        // it already does. They used to be created inside the arguments to saveUserIfMissing below;
         // now that user seeding is lazy, leaving them nested there would mean a role silently
         // stopped being ensured as soon as its demo user existed.
+        //
+        // ROLE_ANGEL was a ninth here, with an `angel` demo account beside the others, until
+        // 2026-09-08. An angel supports a patient and has no role in this subsystem at all
+        // (docs/backlog.md item 44); hc-patient owns the authority and the whole surface for it. This
+        // seeder must not reintroduce it — an authority nothing in this stack reads is an authority a
+        // future reader will look for a use for.
         Authority userAuthority = saveAuthorityIfMissing(createUserAuthority());
         Authority adminAuthority = saveAuthorityIfMissing(createAdminAuthority());
         Authority doctorAuthority = saveAuthorityIfMissing(createDoctorAuthority());
         Authority nurseAuthority = saveAuthorityIfMissing(createNurseAuthority());
-        Authority angelAuthority = saveAuthorityIfMissing(createAngelAuthority());
         Authority carerAuthority = saveAuthorityIfMissing(createCarerAuthority());
         Authority paramedicAuthority = saveAuthorityIfMissing(createParamedicAuthority());
         Authority pharmacistAuthority = saveAuthorityIfMissing(createAuthority(AuthoritiesConstants.PHARMACIST));
@@ -117,7 +122,6 @@ public class InitialSetupMigration implements ApplicationRunner {
         saveUserIfMissing("user", () -> createUser(userAuthority));
         saveUserIfMissing("doctor", () -> createProfessional(doctorAuthority, "doctor"));
         saveUserIfMissing("nurse", () -> createProfessional(nurseAuthority, "nurse"));
-        saveUserIfMissing("angel", () -> createProfessional(angelAuthority, "angel"));
         saveUserIfMissing("carer", () -> createProfessional(carerAuthority, "carer"));
         saveUserIfMissing("paramedic", () -> createProfessional(paramedicAuthority, "paramedic"));
         saveUserIfMissing("pharmacist", () -> createProfessional(pharmacistAuthority, "pharmacist"));
@@ -150,11 +154,6 @@ public class InitialSetupMigration implements ApplicationRunner {
 
     private Authority createNurseAuthority() {
         Authority userAuthority = createAuthority(AuthoritiesConstants.NURSE);
-        return userAuthority;
-    }
-
-    private Authority createAngelAuthority() {
-        Authority userAuthority = createAuthority(AuthoritiesConstants.ANGEL);
         return userAuthority;
     }
 

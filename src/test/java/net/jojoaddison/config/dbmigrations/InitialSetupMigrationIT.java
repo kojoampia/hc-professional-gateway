@@ -86,8 +86,8 @@ class InitialSetupMigrationIT {
 
     @Test
     void everyClinicalAuthorityIsSeeded() {
-        // The nine clinical roles are a cross-repo invariant; the seeder is where the gateway half
-        // of it is established.
+        // The eight clinical disciplines are a cross-repo invariant; the seeder is where the gateway
+        // half of it is established.
         assertThat(template.findAll(net.jojoaddison.domain.Authority.class).stream().map(a -> a.getName())).contains(
             AuthoritiesConstants.ADMIN,
             AuthoritiesConstants.USER,
@@ -97,10 +97,40 @@ class InitialSetupMigrationIT {
             AuthoritiesConstants.PHARMACIST,
             AuthoritiesConstants.THERAPIST,
             AuthoritiesConstants.CARER,
-            AuthoritiesConstants.ANGEL,
             AuthoritiesConstants.CHEMIST,
             AuthoritiesConstants.TECHNICIAN
         );
+    }
+
+    /**
+     * And the care angel is not seeded, in either shape.
+     *
+     * <p>A {@code contains} assertion cannot say this — it passes on a collection holding more than it
+     * names, which is exactly the state a reintroduced {@code createAngelAuthority()} would leave. Item
+     * 44 removed {@code ROLE_ANGEL} from this subsystem: an angel supports one named patient and
+     * hc-patient owns the authority, so seeding it here would create an account nothing in this stack
+     * can read a meaning into — and a demo login whose only purpose was to demonstrate a concept that
+     * has moved.
+     *
+     * <p><b>This asserts what the seeder writes, not what the database holds.</b> Nothing removes an
+     * authority document or strips a granted authority from an existing user, deliberately: an old
+     * {@code ROLE_ANGEL} grant is inert here (see {@code ServicesRouteAuthorizationIT}) and revoking
+     * grants is an operator's decision, not a boot-time runner's. So the check is scoped to the login
+     * and to a freshly seeded name rather than to the whole collection.
+     */
+    @Test
+    void theCareAngelIsNotSeeded() {
+        template.remove(Query.query(Criteria.where("_id").is("ROLE_ANGEL")), net.jojoaddison.domain.Authority.class);
+        template.remove(Query.query(Criteria.where("login").is("angel")), User.class);
+
+        migration.run(null);
+
+        assertThat(template.findById("ROLE_ANGEL", net.jojoaddison.domain.Authority.class))
+            .as("ROLE_ANGEL is hc-patient's authority and this stack must not create it")
+            .isNull();
+        assertThat(template.exists(Query.query(Criteria.where("login").is("angel")), User.class))
+            .as("the angel demo account went with the authority")
+            .isFalse();
     }
 
     @Test
@@ -158,7 +188,6 @@ class InitialSetupMigrationIT {
         "user",
         "doctor",
         "nurse",
-        "angel",
         "carer",
         "paramedic",
         "pharmacist",

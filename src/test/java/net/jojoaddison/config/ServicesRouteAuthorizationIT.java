@@ -45,7 +45,10 @@ import org.springframework.test.web.reactive.server.WebTestClient;
  * that from; naming the authority is the assertion. {@code ROLE_ANGEL} joined that set on 2026-09-06
  * for the same reason, and its cases must stay named for a sharper one: derivation covers whatever
  * is <em>in</em> the array, so an authority removed from it loses its coverage in the same commit
- * and the suite stays green either way.
+ * and the suite stays green either way. Since 2026-09-08 those cases spell {@code "ROLE_ANGEL"} as a
+ * bare string, because item 44 removed the constant along with everything else this stack knew about
+ * an angel — and the authority still arrives here, over the shared signing key and on accounts that
+ * held it before the removal.
  *
  * @see AuthoritiesConstants#CLINICAL_AND_ADMIN
  */
@@ -94,46 +97,59 @@ class ServicesRouteAuthorizationIT {
     }
 
     /**
-     * An angel is not a clinician, and this is the case that says so.
+     * {@code ROLE_ANGEL} is not an authority this stack has, and a token carrying it gets nothing.
      *
-     * <p>The estate decided on 2026-09-06 (docs/backlog.md item 30) that {@code ROLE_ANGEL} is a
-     * grant over one named patient rather than a standing capability: hc-patient records it as an
-     * {@code ACTIVE CareDelegation} and re-reads it per request, so a revocation takes effect on the
-     * next call. {@code CLINICAL_AND_ADMIN} named it until then, and a role check cannot express any
-     * of that — every angel in the estate held unrestricted cross-patient read.
+     * <p><b>The literal is deliberate and is now the only spelling available.</b> These cases read
+     * {@code AuthoritiesConstants.ANGEL} until 2026-09-08, when item 44 removed the authority from
+     * this subsystem entirely — an angel supports one named patient, hc-patient owns the concept and
+     * the whole surface for it, and this stack stopped naming it. Deleting the constant deletes the
+     * assertion's vocabulary, not the thing that has to be true.
      *
-     * <p>Named rather than derived, and that is the point. {@link #clinicalAndAdmin()} reads the
-     * array, so removing an authority from it silently removes its coverage too — the admitted-set
-     * test would go from ten names to nine and stay green. Only an assertion that spells
-     * {@code ROLE_ANGEL} fails when somebody puts it back.
+     * <p><b>What has to be true is a runtime fact, not a constant's absence.</b> Two callers reach
+     * here holding {@code ROLE_ANGEL} however thoroughly this repository forgets the word. The three
+     * gateways share one signing key and this one stamps no {@code iss} claim, so an hc-patient token
+     * is accepted exactly as if this gateway had minted it — and hc-patient goes on issuing the
+     * authority, correctly. And an account on a long-lived database may have been granted it before
+     * the removal; nothing revokes an authority already written to a user document.
+     *
+     * <p>Named rather than derived, for a sharper reason than the {@code ROLE_USER} cases beside it.
+     * {@link #clinicalAndAdmin()} reads the array, so an authority removed from it loses its coverage
+     * in the same commit and the admitted-set test stays green either way. Only an assertion that
+     * spells {@code ROLE_ANGEL} fails when somebody puts it back — including by writing the literal
+     * straight into a matcher, which the reflection guard in {@code AuthoritiesConstantsUnitTest}
+     * cannot see and this one can.
      */
     @ParameterizedTest
     @MethodSource("serviceRoutes")
-    void anAngelIsRefusedEveryServiceRoute(String path) {
-        expectForbidden(path, AuthoritiesConstants.ANGEL);
+    void aTokenBearingTheCareAngelAuthorityIsRefusedEveryServiceRoute(String path) {
+        expectForbidden(path, "ROLE_ANGEL");
     }
 
     /**
-     * And an angel who also holds {@code ROLE_USER} — which every account created through this
-     * gateway does, so it is the shape a real angel token actually takes.
+     * And one that also holds {@code ROLE_USER} — which every account either gateway creates does, so
+     * it is the shape a real angel token actually takes, from hc-patient or from this stack's own past.
      */
     @ParameterizedTest
     @MethodSource("serviceRoutes")
-    void anAngelHoldingTheBaseUserAuthorityIsRefusedEveryServiceRoute(String path) {
-        expectForbidden(path, AuthoritiesConstants.USER, AuthoritiesConstants.ANGEL);
+    void aCareAngelTokenHoldingTheBaseUserAuthorityIsRefusedEveryServiceRoute(String path) {
+        expectForbidden(path, AuthoritiesConstants.USER, "ROLE_ANGEL");
     }
 
     /** Nor the recipient directory, which is the estate's valid-login list. */
     @Test
-    void anAngelIsRefusedTheRecipientDirectory() {
-        expectForbidden("/services/professionalservice/api/messaging/recipients", AuthoritiesConstants.ANGEL);
+    void aTokenBearingTheCareAngelAuthorityIsRefusedTheRecipientDirectory() {
+        expectForbidden("/services/professionalservice/api/messaging/recipients", "ROLE_ANGEL");
     }
 
     /**
-     * What an angel keeps: the three islands, which sit above the authority rule and are what make
-     * this a narrowing rather than a lock-out. An angel signs in, completes onboarding, reads the
-     * inbox the shell loads for them, and sees their own roster — exactly as a role-less applicant
-     * does. Losing these would turn a scope fix into an account that cannot use the portal at all.
+     * What such a caller keeps: the three islands, which sit above the authority rule.
+     *
+     * <p>This is the answer to "what happens to an account that still holds {@code ROLE_ANGEL} from
+     * before the removal" — <b>it is a role-less applicant</b>, no more and no less, because an
+     * authority nothing here names carries nothing here. It signs in, reaches onboarding, reads the
+     * inbox the shell loads for it and sees its own roster. That is the correct destination rather
+     * than a lock-out: the account is real and its holder can be given a clinical authority, or told
+     * to use {@code patient.abofonsa.com}, which is where an angel actually belongs.
      */
     @ParameterizedTest
     @ValueSource(
@@ -145,8 +161,8 @@ class ServicesRouteAuthorizationIT {
             "/services/professionalservice/api/duty-roster",
         }
     )
-    void anAngelStillReachesTheThreeIslands(String path) {
-        expectPastAuthorization(path, AuthoritiesConstants.ANGEL);
+    void aTokenBearingTheCareAngelAuthorityStillReachesTheThreeIslands(String path) {
+        expectPastAuthorization(path, "ROLE_ANGEL");
     }
 
     /**
@@ -202,7 +218,8 @@ class ServicesRouteAuthorizationIT {
      * they are asserted here rather than assumed.
      *
      * <p>Nine and not ten since 2026-09-06: {@code ROLE_ANGEL} left the array, and
-     * {@link #anAngelIsRefusedEveryServiceRoute} is the case that holds it out by name.
+     * {@link #aTokenBearingTheCareAngelAuthorityIsRefusedEveryServiceRoute} is the case that holds it
+     * out by name.
      */
     @ParameterizedTest
     @MethodSource("clinicalAndAdminOnEveryRoute")
