@@ -33,15 +33,6 @@ public final class AuthoritiesConstants {
 
     public static final String NURSE = "ROLE_NURSE";
 
-    /**
-     * A patient's nominated care angel — a family member or proxy acting for one named person, not a
-     * clinical discipline. The authority exists so that this gateway and the portal can tell that
-     * somebody is an angel at all; what an angel may actually read is an {@code ACTIVE CareDelegation}
-     * held in hc-patient and re-read per request. Deliberately outside {@link #CLINICAL_AND_ADMIN}
-     * since 2026-09-06 — see the note there and docs/backlog.md item 30.
-     */
-    public static final String ANGEL = "ROLE_ANGEL";
-
     public static final String CARER = "ROLE_CARER";
 
     public static final String PARAMEDIC = "ROLE_PARAMEDIC";
@@ -65,18 +56,24 @@ public final class AuthoritiesConstants {
      * patient directory, the roster and their own earnings — a routing rule silently reimplementing a
      * mutation rule, and getting it wrong.
      *
-     * <p><b>{@link #ANGEL} is deliberately absent, and it used to be here.</b> The estate decided on
-     * 2026-09-06 (docs/backlog.md item 30) that an angel is <em>not</em> a clinical discipline. A
-     * discipline is a standing capability; an angel's authority is a grant over one named patient,
-     * which hc-patient records as an {@code ACTIVE CareDelegation} and re-reads per request so that a
-     * revocation takes effect on the next call rather than when a {@code rememberMe} token expires.
-     * Admitting {@code ROLE_ANGEL} here granted unrestricted cross-patient read across the estate on
-     * a role check — exactly what that delegation model exists to prevent — and this line is where
-     * that over-grant lived. The authority itself is not retired: it is still seeded, still assigned
-     * and still carried in a token, and an angel still reaches the three islands below this rule
-     * (onboarding, the shell's own-scoped inbox reads, their own roster). It simply no longer opens
-     * the clinical surface. Do not add it back; {@code ServicesRouteAuthorizationIT} refuses it by
-     * name, and {@code AuthoritiesConstantsUnitTest} refuses it in this array.
+     * <p><b>There is no {@code ANGEL} constant to leave out of this array any more, and that is the
+     * point.</b> {@code ROLE_ANGEL} left this array on 2026-09-06 (docs/backlog.md item 30, an angel
+     * is not a clinical discipline) and left this stack altogether on 2026-09-08 (item 44): <b>an
+     * angel only supports a patient, and has no role whatsoever in the professional subsystem.</b> An
+     * angel's authority is a grant over one named patient, which hc-patient records as an
+     * {@code ACTIVE CareDelegation} and re-reads per request so that a revocation takes effect on the
+     * next call rather than when a {@code rememberMe} token expires — and hc-patient owns the whole
+     * surface for it. This stack no longer seeds the authority, no longer assigns it and no longer
+     * names it anywhere.
+     *
+     * <p><b>A token bearing {@code ROLE_ANGEL} can still arrive here, and must keep granting nothing.</b>
+     * The three gateways share one signing key and this one stamps no {@code iss} claim, so an
+     * hc-patient token reaches this rule exactly as if this gateway had minted it — as does a token for
+     * an account on a long-lived database that held the authority before it was removed. Both are
+     * refused by this array for the same reason {@code ROLE_PATIENT} is: the list is positive, so an
+     * authority nothing here names is an authority nothing here admits. {@code ServicesRouteAuthorizationIT}
+     * asserts that by the literal string, and {@code AuthoritiesConstantsUnitTest} fails if
+     * {@code "ROLE_ANGEL"} reappears in any privilege set in this class.
      *
      * <p><b>{@code ROLE_USER} is deliberately absent, and that is the whole point of the list.</b> The
      * three stacks share one signing key and no token this gateway issues carries an {@code iss}

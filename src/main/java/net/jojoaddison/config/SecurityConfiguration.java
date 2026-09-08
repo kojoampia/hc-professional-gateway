@@ -222,12 +222,18 @@ public class SecurityConfiguration {
                     // "the request never reached routing". A denyAll() here would answer 403 and
                     // that check would stop being able to tell the two apart.
                     //
-                    // ROLE_ANGEL WAS IN THIS LIST UNTIL 2026-09-06 AND IS NOT ANY MORE. An angel is
-                    // a proxy for one named patient, recorded in hc-patient as an ACTIVE
-                    // CareDelegation and re-read per request; it is not a discipline, and a role
-                    // check here granted every angel in the estate unrestricted cross-patient read.
-                    // The authority survives — an angel still signs in and still reaches the three
-                    // islands above — it just no longer opens the clinical surface. Backlog item 30.
+                    // ROLE_ANGEL IS NOT AN AUTHORITY THIS STACK HAS. It left this list on 2026-09-06
+                    // (item 30 — an angel is a proxy for one named patient, recorded in hc-patient as
+                    // an ACTIVE CareDelegation and re-read per request, so a role check here granted
+                    // every angel in the estate unrestricted cross-patient read) and left the stack
+                    // entirely on 2026-09-08 (item 44): an angel supports a patient, hc-patient owns
+                    // the whole surface for it, and nothing here names the concept any more.
+                    //
+                    // A token carrying it can still arrive — the three gateways share one key and this
+                    // one stamps no `iss`, and an account on an old database may still hold the
+                    // authority. This rule refuses it for the reason it refuses ROLE_PATIENT: the list
+                    // is positive, so an authority nobody named is an authority nobody admits. Such a
+                    // caller is exactly a role-less applicant, keeping the three islands above.
                     .pathMatchers("/services/**").hasAnyAuthority(AuthoritiesConstants.CLINICAL_AND_ADMIN)
                     .pathMatchers("/v3/api-docs/**").hasAuthority(AuthoritiesConstants.ADMIN)
                     .pathMatchers("/management/health").permitAll()
