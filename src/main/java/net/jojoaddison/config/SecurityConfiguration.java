@@ -97,6 +97,23 @@ public class SecurityConfiguration {
                     .pathMatchers(HttpMethod.POST, "/api/auth/logout").permitAll()
                     .pathMatchers("/api/auth/sessions/**").authenticated()
                     .pathMatchers("/api/admin/**").hasAuthority(AuthoritiesConstants.ADMIN)
+                    // PublicUserResource returns {id, login} for every activated account — the
+                    // complete login-to-User.id table. "Public" is JHipster's name for it, not a
+                    // description of who may read it: it fell through to the catch-all below, so any
+                    // authenticated caller could enumerate the mapping, including an applicant
+                    // holding bare ROLE_USER and a token minted by a sibling stack (the three
+                    // gateways share a signing key and TokenOriginValidator ships disabled).
+                    //
+                    // That mapping is what makes a client-supplied accountId targetable rather than
+                    // guessable, which is why backlog item 53 could not adopt it — see item 54 for
+                    // the takeover it enabled in api/. Nothing in the estate calls this endpoint:
+                    // the only three references to it are comments in web/, mobile/ and api/
+                    // explaining why the messaging recipient picker was built separately instead.
+                    // It is kept rather than deleted because item 50's migration needs exactly this
+                    // table, and admin is who would run that.
+                    //
+                    // Both patterns: "/api/users/**" does not match "/api/users" itself.
+                    .pathMatchers("/api/users", "/api/users/**").hasAuthority(AuthoritiesConstants.ADMIN)
                     .pathMatchers("/api/**").authenticated()
                     // The STOMP handshake for message notifications, routed straight through to
                     // professionalservice. It has to be open HERE: a browser cannot set an
