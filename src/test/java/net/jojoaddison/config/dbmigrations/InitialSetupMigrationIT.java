@@ -112,11 +112,17 @@ class InitialSetupMigrationIT {
      * can read a meaning into — and a demo login whose only purpose was to demonstrate a concept that
      * has moved.
      *
-     * <p><b>This asserts what the seeder writes, not what the database holds.</b> Nothing removes an
-     * authority document or strips a granted authority from an existing user, deliberately: an old
-     * {@code ROLE_ANGEL} grant is inert here (see {@code ServicesRouteAuthorizationIT}) and revoking
-     * grants is an operator's decision, not a boot-time runner's. So the check is scoped to the login
-     * and to a freshly seeded name rather than to the whole collection.
+     * <p><b>This asserts what the seeder writes, not what the database holds</b>, so the check is
+     * scoped to the login and to a freshly seeded name rather than to the whole collection —
+     * <em>this</em> class only has to say that seeding does not reintroduce the authority.
+     *
+     * <p>Cleaning up a database that already holds one is {@link AngelAuthorityMigration}'s, added by
+     * item 63. This paragraph used to say that nothing removes an authority document or strips a
+     * granted authority, "deliberately: … revoking grants is an operator's decision, not a boot-time
+     * runner's". That rule is right about a grant an operator <em>made</em> and wrong about this one:
+     * there is no intent to preserve once the authority names a concept the product deleted, and the
+     * surviving {@code jhi_authority} row was not inert — it kept {@code ROLE_ANGEL} assignable
+     * through {@code POST /api/admin/users}. See that class for the full argument.
      */
     @Test
     void theCareAngelIsNotSeeded() {
