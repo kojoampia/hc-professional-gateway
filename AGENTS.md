@@ -48,6 +48,38 @@ This gateway is the **only** JWT issuer; downstream services validate. `../docs/
 
 Two rules: **publishing must never break the registration path** (failures are logged, not propagated — keep the try/catch), and the payload carries identifiers plus `login`/`email`/`langKey` only. `api/` publishes `entity.created` and `compliance.alert` to a separate topic with the same envelope shape; keep the two in step. Covered by `RegistrationEventPublisherTest`.
 
+## Application metrics
+
+Two application meters, beside the JVM and HTTP ones the OpenTelemetry agent produces by itself. Both live in
+`management/` and are read by a dashboard in `hc-professional-quality`, so **their names and tag keys are a published
+interface** — `management/MeterScrapeNamesUnitTest` asserts the exported spellings literally for that reason
+(`../docs/backlog.md` item 96).
+
+| Micrometer name                  | Tag       | Values                              | Shape   | Emitted by                                           |
+| -------------------------------- | --------- | ----------------------------------- | ------- | ---------------------------------------------------- |
+| `security.authentication.logins` | `outcome` | `success`, `refused`, `unavailable` | counter | `AuthenticateController` on `POST /api/authenticate` |
+| `security.registration.accounts` | `state`   | `activated`, `not-activated`        | gauge   | `service/RegistrationMetersRefresher`, every 60 s    |
+
+Scraped as `security_authentication_logins_total{outcome="…"}` and `security_registration_accounts{state="…"}`.
+
+Three things not to undo:
+
+- **`refused` and `unavailable` are separate on purpose.** A credential the gateway asked about and was told no, and a
+  user store the gateway could not ask at all, are different facts; one failure counter reports an outage as a wall of
+  wrong passwords. Same argument as `../docs/backlog.md` item 83 at a different site.
+- **The logins meter is not `security.authentication.invalid-tokens`.** That one counts tokens, and an `expired` token
+  is a _successful_ login whose token has since aged out. Adding the two together reports a healthy user's return visit
+  as an authentication failure. `SecurityMetersServiceTests` holds both directions of this.
+- **The registration gauges read a field, never the database.** Micrometer samples a gauge synchronously on whatever
+  thread is exporting or scraping, which here can be a Netty event loop; the query belongs on the scheduler, which is
+  the only reason `RegistrationMetersRefresher` exists. A failed count publishes `NaN` — a gap on the panel — rather
+  than zero or the previous value, both of which would assert a population nobody counted.
+
+The refresh interval is a constant rather than a property: `ApplicationProperties` is `ignoreUnknownFields = false`, so
+an `application.*` key with no matching binding fails context startup, and `src/test/resources/config/application.yml`
+_replaces_ the production file on the test classpath — so no test in this repository would catch it
+(`../docs/backlog.md` item 86, which is `api/`'s version of the same trap).
+
 ## Commands
 
 ```bash

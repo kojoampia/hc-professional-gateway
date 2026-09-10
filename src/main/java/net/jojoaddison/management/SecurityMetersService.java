@@ -13,11 +13,36 @@ public class SecurityMetersService {
     public static final String INVALID_TOKENS_METER_BASE_UNIT = "errors";
     public static final String INVALID_TOKENS_METER_CAUSE_DIMENSION = "cause";
 
+    /**
+     * Sign-in attempts at {@code POST /api/authenticate}, by what came of them — see {@code docs/backlog.md} item 96.
+     *
+     * <p><strong>This is a different meter from {@link #INVALID_TOKENS_METER_NAME} and the two must never be added
+     * together.</strong> That one counts <em>tokens</em>: an {@code expired} token is a login that <em>succeeded</em>
+     * and whose token has since aged out, so a healthy user coming back the next morning increments it. Rolling the
+     * two into one number would report that return visit as an authentication failure, which is the reading item 96
+     * exists to prevent.</p>
+     */
+    public static final String LOGINS_METER_NAME = "security.authentication.logins";
+    public static final String LOGINS_METER_DESCRIPTION = "Counts sign-in attempts by outcome: success, refused or unavailable.";
+    public static final String LOGINS_METER_BASE_UNIT = "logins";
+    public static final String LOGINS_METER_OUTCOME_DIMENSION = "outcome";
+
+    /** A token was issued: the credential was accepted and the caller got what they asked for. */
+    public static final String LOGIN_OUTCOME_SUCCESS = "success";
+    /** The credential was <em>refused</em> — asked and answered no. */
+    public static final String LOGIN_OUTCOME_REFUSED = "refused";
+    /** The question could not be <em>asked</em>: the user store or the token path failed. */
+    public static final String LOGIN_OUTCOME_UNAVAILABLE = "unavailable";
+
     private final Counter tokenInvalidSignatureCounter;
     private final Counter tokenExpiredCounter;
     private final Counter tokenUnsupportedCounter;
     private final Counter tokenMalformedCounter;
     private final Counter tokenUntrustedOriginCounter;
+
+    private final Counter loginSuccessCounter;
+    private final Counter loginRefusedCounter;
+    private final Counter loginUnavailableCounter;
 
     public SecurityMetersService(MeterRegistry registry) {
         this.tokenInvalidSignatureCounter = invalidTokensCounterForCauseBuilder("invalid-signature").register(registry);
@@ -25,6 +50,10 @@ public class SecurityMetersService {
         this.tokenUnsupportedCounter = invalidTokensCounterForCauseBuilder("unsupported").register(registry);
         this.tokenMalformedCounter = invalidTokensCounterForCauseBuilder("malformed").register(registry);
         this.tokenUntrustedOriginCounter = invalidTokensCounterForCauseBuilder("untrusted-origin").register(registry);
+
+        this.loginSuccessCounter = loginsCounterForOutcomeBuilder(LOGIN_OUTCOME_SUCCESS).register(registry);
+        this.loginRefusedCounter = loginsCounterForOutcomeBuilder(LOGIN_OUTCOME_REFUSED).register(registry);
+        this.loginUnavailableCounter = loginsCounterForOutcomeBuilder(LOGIN_OUTCOME_UNAVAILABLE).register(registry);
     }
 
     private Counter.Builder invalidTokensCounterForCauseBuilder(String cause) {
@@ -32,6 +61,13 @@ public class SecurityMetersService {
             .baseUnit(INVALID_TOKENS_METER_BASE_UNIT)
             .description(INVALID_TOKENS_METER_DESCRIPTION)
             .tag(INVALID_TOKENS_METER_CAUSE_DIMENSION, cause);
+    }
+
+    private Counter.Builder loginsCounterForOutcomeBuilder(String outcome) {
+        return Counter.builder(LOGINS_METER_NAME)
+            .baseUnit(LOGINS_METER_BASE_UNIT)
+            .description(LOGINS_METER_DESCRIPTION)
+            .tag(LOGINS_METER_OUTCOME_DIMENSION, outcome);
     }
 
     public void trackTokenInvalidSignature() {
@@ -62,5 +98,42 @@ public class SecurityMetersService {
      */
     public void trackTokenUntrustedOrigin() {
         this.tokenUntrustedOriginCounter.increment();
+    }
+
+    /**
+     * A sign-in that ended with a token in the caller's hands.
+     */
+    public void trackLoginSuccess() {
+        this.loginSuccessCounter.increment();
+    }
+
+    /**
+     * A sign-in the authentication backend <em>answered no</em> to: a wrong password, a login nobody holds, or an
+     * account that has not been activated yet.
+     *
+     * <p><strong>Those three are deliberately one number, and the reason is a decision this repository has already
+     * taken once.</strong> {@code AuthenticateControllerIT.anUnactivatedAccountLooksExactlyLikeAMissingOne} holds the
+     * 401 bodies byte-identical so that an anonymous caller cannot tell "exists but unactivated" from "no such user";
+     * splitting them here would hand that same distinction back through {@code /management/prometheus}, which is
+     * {@code permitAll()}. What the operator loses is nothing they need from this meter — "are activation emails
+     * arriving?" is answered by {@link RegistrationMetersService}'s {@code not-activated} population, which climbs
+     * when they are not, and does so whether or not anyone tries to sign in.</p>
+     */
+    public void trackLoginRefused() {
+        this.loginRefusedCounter.increment();
+    }
+
+    /**
+     * A sign-in that was never <em>asked</em>: the user store could not be reached, or the token could not be issued.
+     *
+     * <p>This is the meter that keeps an outage from being reported as a wall of wrong passwords, and it is here for
+     * the reason {@code docs/backlog.md} item 83 gives at a different site — <em>"refused" is not "could not ask"</em>.
+     * With one failure counter, a Mongo outage and a credential-stuffing run are the same rising line and the operator
+     * has to guess which they are looking at. The two lines separate them without a guess: {@code refused} climbing
+     * alone is people getting their passwords wrong, and {@code unavailable} climbing at all is this gateway being
+     * unable to answer.</p>
+     */
+    public void trackLoginUnavailable() {
+        this.loginUnavailableCounter.increment();
     }
 }
