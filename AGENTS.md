@@ -50,19 +50,30 @@ Two rules: **publishing must never break the registration path** (failures are l
 
 ## Application metrics
 
-Two application meters, beside the JVM and HTTP ones the OpenTelemetry agent produces by itself. Both live in
-`management/` and are read by a dashboard in `hc-professional-quality`, so **their names and tag keys are a published
-interface** — `management/MeterScrapeNamesUnitTest` asserts the exported spellings literally for that reason
-(`../docs/backlog.md` item 96).
+Three application meter families, beside the JVM and HTTP ones the OpenTelemetry agent produces by itself. All live in
+`management/`, and the two added by `../docs/backlog.md` item 96 are read by a dashboard in `hc-professional-quality` —
+so **their names and tag keys are a published interface**, which is why `management/MeterScrapeNamesUnitTest` asserts
+the exported spellings literally.
 
-| Micrometer name                  | Tag       | Values                              | Shape   | Emitted by                                           |
-| -------------------------------- | --------- | ----------------------------------- | ------- | ---------------------------------------------------- |
-| `security.authentication.logins` | `outcome` | `success`, `refused`, `unavailable` | counter | `AuthenticateController` on `POST /api/authenticate` |
-| `security.registration.accounts` | `state`   | `activated`, `not-activated`        | gauge   | `service/RegistrationMetersRefresher`, every 60 s    |
+| Micrometer name                          | Tag       | Values                                                                         | Shape   | Emitted by                                                      |
+| ---------------------------------------- | --------- | ------------------------------------------------------------------------------ | ------- | --------------------------------------------------------------- |
+| `security.authentication.invalid-tokens` | `cause`   | `invalid-signature`, `expired`, `unsupported`, `malformed`, `untrusted-origin` | counter | `config/SecurityJwtConfiguration`'s decoder — pre-dates item 96 |
+| `security.authentication.logins`         | `outcome` | `success`, `refused`, `unavailable`                                            | counter | `AuthenticateController` on `POST /api/authenticate`            |
+| `security.registration.accounts`         | `state`   | `activated`, `not-activated`                                                   | gauge   | `service/RegistrationMetersRefresher`, every 60 s               |
 
-Scraped as `security_authentication_logins_total{outcome="…"}` and `security_registration_accounts{state="…"}`.
+Exported as `security_authentication_invalid_tokens_errors_total{cause="…"}`,
+`security_authentication_logins_total{outcome="…"}` and `security_registration_accounts{state="…"}`. **All three carry
+a base unit; two of them hide it** because the name already ends in its own unit word — rename either and the exported
+name changes silently, which `MeterScrapeNamesUnitTest` exists to catch.
 
-Three things not to undo:
+**They reach a dashboard on quality and nowhere else.** `OTEL_INSTRUMENTATION_MICROMETER_ENABLED` is set only in
+`../quality/compose.yml`; `../deploy/prod-server/compose.yml` sets the service name, endpoint, protocol and resource
+attributes and **no Micrometer bridge**, so on `professional.abofonsa.com` all three families are computed every
+minute and exported to nothing. That is a `deploy/` change and not this repository's, but do not read a production
+Grafana and conclude the meters are broken. `REFRESH_INTERVAL_MS` is justified against `OTEL_METRIC_EXPORT_INTERVAL`,
+which is likewise quality-only.
+
+Four things not to undo:
 
 - **`refused` and `unavailable` are separate on purpose.** A credential the gateway asked about and was told no, and a
   user store the gateway could not ask at all, are different facts; one failure counter reports an outage as a wall of
@@ -73,7 +84,13 @@ Three things not to undo:
 - **The registration gauges read a field, never the database.** Micrometer samples a gauge synchronously on whatever
   thread is exporting or scraping, which here can be a Netty event loop; the query belongs on the scheduler, which is
   the only reason `RegistrationMetersRefresher` exists. A failed count publishes `NaN` — a gap on the panel — rather
-  than zero or the previous value, both of which would assert a population nobody counted.
+  than zero or the previous value, both of which would assert a population nobody counted. **That includes a count
+  that never answers**: a hung Mongo emits no error at all, so without `COUNT_TIMEOUT` the gauge would hold its last
+  good value for the length of the hang and draw exactly the flat line the `NaN` exists to prevent.
+- **Nothing in this repository can run the `@Scheduled` trigger.** `@EnableScheduling` is on `AsyncConfiguration`,
+  which is `@Profile("!testdev & !testprod")`, and integration tests run under `testdev` — so deleting the annotation
+  leaves every gate green while both registration panels stay empty forever. `RegistrationMetersRefresherUnitTest`
+  reflects over the annotation for that reason, in the same spirit as `AuthoritiesConstantsUnitTest`.
 
 The refresh interval is a constant rather than a property: `ApplicationProperties` is `ignoreUnknownFields = false`, so
 an `application.*` key with no matching binding fails context startup, and `src/test/resources/config/application.yml`

@@ -84,9 +84,22 @@ class RegistrationMetersServiceTests {
      * The gauges are sampled wherever the exporter happens to be, and on this gateway that includes Netty's event
      * loop — {@code /management/prometheus} is served by WebFlux like everything else.
      *
-     * <p>This drives a sample on a Reactor scheduler thread, which BlockHound treats as non-blocking, so anything
-     * the callback did that blocked would throw here. The first half of the test proves the trap is armed: without
-     * it, a green result would be equally consistent with BlockHound not being installed at all.</p>
+     * <p>This drives a sample on a Reactor scheduler thread, which BlockHound treats as non-blocking. The first half
+     * proves the trap is armed — without it, a green result would be equally consistent with BlockHound not being
+     * installed at all.</p>
+     *
+     * <p><strong>The second half fails by a different mechanism than the first, and the difference is worth knowing
+     * before anyone simplifies it.</strong> BlockHound's error is thrown <em>inside</em> the gauge callback, and
+     * Micrometer's {@code DefaultGauge.value()} catches {@code Throwable}, logs
+     * {@code Failed to apply the value function for the gauge} at WARN once (DEBUG thereafter) and returns
+     * {@code NaN}. So a blocking callback surfaces here as {@code expected: 17.0 but was: NaN}, not as a thrown
+     * error — which makes {@code assertThat(sampled).isEqualTo(17)} the whole guard. Replace it with a null check, or
+     * drop it for a bare "no exception" assertion, and this test passes against a callback that blocks on every
+     * sample.</p>
+     *
+     * <p>That swallow is a production fact as much as a test one: <em>a gauge callback that throws is invisible
+     * except for one WARN line</em>, and the panel simply shows a gap. It is another reason the callback here does
+     * nothing but read a field.</p>
      */
     @Test
     void samplingAGaugeDoesNotBlockANonBlockingThread() {
@@ -106,6 +119,8 @@ class RegistrationMetersServiceTests {
             .subscribeOn(Schedulers.parallel())
             .block(Duration.ofSeconds(5));
 
+        // Load-bearing, and not a sanity check on the value: a blocked callback returns NaN here rather than
+        // throwing, so this comparison is the only thing in the test that can see it. See the javadoc above.
         assertThat(sampled).isEqualTo(17);
     }
 

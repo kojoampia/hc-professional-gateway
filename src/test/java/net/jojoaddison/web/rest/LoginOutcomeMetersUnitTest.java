@@ -55,6 +55,7 @@ class LoginOutcomeMetersUnitTest {
 
     private MeterRegistry meterRegistry;
     private UserRepository userRepository;
+    private RefreshTokenService refreshTokenService;
     private AuthenticateController controller;
 
     @BeforeEach
@@ -71,7 +72,10 @@ class LoginOutcomeMetersUnitTest {
         TokenProvider tokenProvider = mock(TokenProvider.class);
         when(tokenProvider.createAccessToken(any(), any())).thenReturn("a-signed-token");
 
-        controller = new AuthenticateController(authenticationManager, tokenProvider, mock(RefreshTokenService.class), metersService);
+        refreshTokenService = mock(RefreshTokenService.class);
+        when(tokenProvider.authorityString(any())).thenReturn(AuthoritiesConstants.USER);
+
+        controller = new AuthenticateController(authenticationManager, tokenProvider, refreshTokenService, metersService);
     }
 
     @Test
@@ -140,6 +144,41 @@ class LoginOutcomeMetersUnitTest {
             );
     }
 
+    /**
+     * The mobile branch, which the browser cases never enter.
+     *
+     * <p>{@code authorize} puts its {@code doOnNext} <em>after</em> the response {@code flatMap} so that success
+     * means "the caller got a token" rather than "the password matched" — and the only branch where those two differ
+     * is this one, because it persists a refresh token after the credential is accepted. Without a mobile case that
+     * reason is asserted in a comment and exercised by nothing.</p>
+     */
+    @Test
+    void aMobileSignInCountsSuccessOnceTheRefreshTokenIsIssued() {
+        userExists(true);
+        when(refreshTokenService.issue(any(), any(), any(), any(), any(), any())).thenReturn(
+            Mono.just(new RefreshTokenService.TokenPair("access", "refresh", 900))
+        );
+
+        attemptMobileLogin(LOGIN, PASSWORD);
+
+        assertOnlyOutcomeCounted(LOGIN_OUTCOME_SUCCESS);
+    }
+
+    @Test
+    void aMobileSignInWhoseRefreshTokenCannotBePersistedIsUnavailableAndNotASuccess() {
+        // The credential was accepted and the clinician still cannot sign in. Counting this as a success — which is
+        // what tracking the authentication step alone would do — would leave the failure on no panel at all, and
+        // counting it as `refused` would blame the password. It is the gateway failing, so it is `unavailable`.
+        userExists(true);
+        when(refreshTokenService.issue(any(), any(), any(), any(), any(), any())).thenReturn(
+            Mono.error(new DataAccessResourceFailureException("no route to mongo"))
+        );
+
+        attemptMobileLogin(LOGIN, PASSWORD);
+
+        assertOnlyOutcomeCounted(LOGIN_OUTCOME_UNAVAILABLE);
+    }
+
     private void userExists(boolean activated) {
         User user = new User();
         user.setId("uid-1");
@@ -159,6 +198,17 @@ class LoginOutcomeMetersUnitTest {
      * <p>The failure is absorbed here because in the running application it goes to {@code ExceptionTranslator} and
      * becomes a 401 or a 500; what this class is about is what was counted on the way past.</p>
      */
+    /** The same drive, with {@code client} set so {@link LoginVM#isMobileClient()} takes the refresh-token path. */
+    private void attemptMobileLogin(String username, String password) {
+        LoginVM login = new LoginVM();
+        login.setUsername(username);
+        login.setPassword(password);
+        login.setClient("ios");
+        login.setDeviceId("device-1");
+        login.setDeviceName("a phone");
+        controller.authorize(Mono.just(login)).onErrorResume(error -> Mono.empty()).block();
+    }
+
     private Throwable attemptLogin(String username, String password) {
         LoginVM login = new LoginVM();
         login.setUsername(username);

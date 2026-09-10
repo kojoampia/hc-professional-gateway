@@ -18,6 +18,22 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Scraped from a real {@link PrometheusMeterRegistry} rather than transcribed from the convention's source, since
  * the transcription is the part that would be wrong.</p>
+ *
+ * <p><strong>Both meters carry a base unit, and both spellings hide it by coincidence.</strong> Neither is unitless:
+ * {@code logins} and {@code accounts} are declared, and the convention appends a base unit only when the name does not
+ * already end in it — which each of these happens to do. The pre-existing meter is the same rule with the other
+ * outcome, {@code security.authentication.invalid-tokens} + {@code errors} exporting as
+ * {@code ..._invalid_tokens_errors_total}. So <em>renaming either meter to anything not ending in its own unit word
+ * silently changes the exported name</em>: {@code security.registration.population} would export as
+ * {@code security_registration_population_accounts}. Nothing else in the estate would notice — this class is the only
+ * thing standing between such a rename and a screen of blank panels in another repository.</p>
+ *
+ * <p><strong>The residual, stated because it is easy to mistake this class for more than it is.</strong> What is
+ * pinned here is {@code PrometheusMeterRegistry}'s convention. The dashboard reads <em>Mimir</em>, fed by the
+ * OpenTelemetry agent's Micrometer bridge, and item 96 deliberately chose that path over scraping
+ * {@code /management/prometheus}. The two conventions agree today and hc-patient's live series in Mimir corroborate
+ * it, but <strong>nothing here measures the name that actually arrives</strong>. One read-back after package B rolls
+ * closes that, and until then this is a strong proxy rather than the thing itself.</p>
  */
 class MeterScrapeNamesUnitTest {
 

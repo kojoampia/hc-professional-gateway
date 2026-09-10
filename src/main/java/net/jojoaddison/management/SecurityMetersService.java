@@ -124,7 +124,15 @@ public class SecurityMetersService {
     }
 
     /**
-     * A sign-in that was never <em>asked</em>: the user store could not be reached, or the token could not be issued.
+     * A sign-in this gateway could not answer — as opposed to one it answered with a no.
+     *
+     * <p><strong>Read it as "the gateway failed", not as "Mongo is down".</strong> The user store being unreachable
+     * is the case it was built for and the commonest one, and a refresh token that could not be persisted is the
+     * next; but the classification is by exclusion, so a <em>programming</em> error on the token path — an NPE out of
+     * {@code browserResponse}, {@code mobileResponse} or {@code TokenProvider} — lands here too. That is deliberate:
+     * from the clinician's side it is the same event, and a bug that stops sign-ins should not be invisible because
+     * nobody wrote a counter for it. It does mean this line climbing is not by itself evidence about the database.
+     * The `log.error` beside the increment carries the stack trace, and an error-level count is a panel of its own.</p>
      *
      * <p>This is the meter that keeps an outage from being reported as a wall of wrong passwords, and it is here for
      * the reason {@code docs/backlog.md} item 83 gives at a different site — <em>"refused" is not "could not ask"</em>.

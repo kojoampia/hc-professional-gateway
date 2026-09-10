@@ -11,11 +11,13 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
 import net.jojoaddison.management.RegistrationMetersService;
 import net.jojoaddison.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.scheduling.annotation.Scheduled;
 import reactor.core.publisher.Mono;
 
 /**
@@ -73,6 +75,76 @@ class RegistrationMetersRefresherUnitTest {
 
         assertThat(gauge(ACCOUNT_STATE_ACTIVATED)).isNaN();
         assertThat(gauge(ACCOUNT_STATE_NOT_ACTIVATED)).isNaN();
+    }
+
+    /**
+     * A Mongo that accepts the query and never answers.
+     *
+     * <p>This is the failure the {@code NaN} decision is most easily defeated by, because unlike a refusal it emits
+     * <em>nothing</em>: without {@link RegistrationMetersRefresher#COUNT_TIMEOUT} no {@code onError} ever arrives, no
+     * failure is recorded, and the gauge holds its last good value for the length of the hang — the flat line
+     * {@code RegistrationMetersService} exists to refuse, arriving through the one path with no signal to catch.</p>
+     *
+     * <p>Driven through the deadline-taking overload with fifty milliseconds rather than the production ten seconds —
+     * {@code reactor-test} is not on this classpath, so there is no virtual time, and the operator being exercised is
+     * the real one either way. The successful refresh first is the same load-bearing setup as the test above: only a
+     * value that was there and is gone proves the timeout reached the meter.</p>
+     */
+    @Test
+    void aCountThatNeverAnswersIsPublishedAsUnavailable() {
+        when(userRepository.countByActivatedIsTrue()).thenReturn(Mono.just(17L));
+        when(userRepository.countByActivatedIsFalse()).thenReturn(Mono.just(4L));
+        refresher.refreshReactively().block();
+        assertThat(gauge(ACCOUNT_STATE_ACTIVATED)).isEqualTo(17);
+
+        when(userRepository.countByActivatedIsTrue()).thenReturn(Mono.never());
+
+        // A bounded block, and the bound matters: with the timeout removed this Mono never completes, and a bare
+        // block() would hang the build instead of failing it — a mutation nobody could read the result of, and a
+        // regression that would look like a stuck CI runner rather than a broken meter.
+        refresher.refreshReactively(Duration.ofMillis(50)).block(Duration.ofSeconds(5));
+
+        assertThat(gauge(ACCOUNT_STATE_ACTIVATED)).isNaN();
+        assertThat(gauge(ACCOUNT_STATE_NOT_ACTIVATED)).isNaN();
+    }
+
+    /**
+     * The timeout has to stay well under the refresh interval, and the reason is not tidiness.
+     *
+     * <p>Two ticks in flight can complete out of order, so an older pair of counts can overwrite a newer one and the
+     * gauge goes backwards with nothing in the logs to explain it. A timeout shorter than the interval means a hung
+     * tick has given up before the next one starts.</p>
+     */
+    @Test
+    void aHungRefreshGivesUpBeforeTheNextOneStarts() {
+        assertThat(RegistrationMetersRefresher.COUNT_TIMEOUT.toMillis()).isLessThan(RegistrationMetersRefresher.REFRESH_INTERVAL_MS);
+    }
+
+    /**
+     * The trigger itself, which no test in this repository can reach at runtime.
+     *
+     * <p>{@code @EnableScheduling} lives on {@code AsyncConfiguration}, which is
+     * {@code @Profile("!testdev & !testprod")}, and integration tests run under {@code testdev} with
+     * {@code AsyncSyncConfiguration} substituted — so the scheduler never starts in a test and both
+     * {@code RegistrationMetersRefresherIT} methods drive {@code refreshReactively()} by hand. Delete the annotation
+     * and every gate in this repository stays green while both gauges sit at {@code NaN} for the life of the JVM and
+     * both registration panels are permanently empty. That is the same "a meter nobody increments looks exactly like
+     * a working one" failure {@code LoginOutcomeMetersIT} closes for the counters, and the only way to close it here
+     * is to read the annotation, as {@code AuthoritiesConstantsUnitTest} reads the authority fields.</p>
+     */
+    @Test
+    void theRefreshIsScheduledAtAll() throws NoSuchMethodException {
+        Scheduled scheduled = RegistrationMetersRefresher.class.getMethod("refresh").getAnnotation(Scheduled.class);
+
+        assertThat(scheduled).as("nothing else in this repository can notice if the trigger is removed").isNotNull();
+    }
+
+    /** And that it fires at the interval the class documents, rather than at some other one. */
+    @Test
+    void theRefreshIsScheduledAtTheDocumentedInterval() throws NoSuchMethodException {
+        Scheduled scheduled = RegistrationMetersRefresher.class.getMethod("refresh").getAnnotation(Scheduled.class);
+
+        assertThat(scheduled).isNotNull().extracting(Scheduled::fixedRate).isEqualTo(RegistrationMetersRefresher.REFRESH_INTERVAL_MS);
     }
 
     @Test
