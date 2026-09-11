@@ -33,4 +33,15 @@ public interface UserRepository extends ReactiveMongoRepository<User, String> {
     Flux<User> findAllByIdNotNullAndActivatedIsTrue(Pageable pageable);
 
     Mono<Long> count();
+
+    /**
+     * The activated and not-yet-activated halves of the account population, for the registration gauges — see
+     * {@code net.jojoaddison.management.RegistrationMetersService} and {@code docs/backlog.md} item 96.
+     * <p>
+     * Two independent counts rather than a total minus one of them: derived counts cannot disagree into a negative
+     * number if an account is created or deleted between the two queries, whereas a subtraction can.
+     */
+    Mono<Long> countByActivatedIsTrue();
+
+    Mono<Long> countByActivatedIsFalse();
 }
