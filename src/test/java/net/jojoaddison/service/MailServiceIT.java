@@ -15,10 +15,13 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.jojoaddison.IntegrationTest;
@@ -265,6 +268,72 @@ class MailServiceIT {
                 "<html>" + emailTitle + ", http://127.0.0.1:8080, john</html>\n"
             );
         }
+    }
+
+    /**
+     * Every generator name that must never appear in a message a person receives. {@code hcProfessionalGateway} is
+     * the JHipster application name and {@code JHipster} is the framework's own — both shipped in production subject
+     * lines and sign-offs until 2026-09-11.
+     */
+    private static final String[] OFF_BRAND_NAMES = { "hcProfessionalGateway", "JHipster" };
+
+    private static final String BRAND = "Abofonsa BridgeCare";
+
+    /**
+     * The three real emails carry the brand in the subject line and in the sign-off.
+     *
+     * <p>This exists because nothing else asserted it. {@code testSendActivationEmail}, {@code testCreationEmail} and
+     * {@code testSendPasswordResetMail} check {@code isNotEmpty()} and the content type and nothing more, so every one
+     * of them stayed green while the subject read <em>"hcProfessionalGateway account activation is required"</em> and
+     * the sign-off read <em>"hcProfessionalGateway Team."</em> in production.
+     *
+     * <p>It asserts the <em>shipped</em> strings. Both the title and the signature resolve through
+     * {@code src/main/resources/i18n/messages.properties}, which the test classpath does not shadow — the only test
+     * bundle, {@code src/test/resources/i18n/messages_en.properties}, carries {@code email.test.title} alone and
+     * everything else falls through to the base bundle. The mail <em>templates</em> are shadowed by the copies under
+     * {@code src/test/resources/templates/mail/}, so this cannot speak for their literal fallback text; it speaks for
+     * the bundle, which is what every rendered email actually uses.
+     */
+    @Test
+    void everyEmailCarriesTheBrandInItsSubjectAndSignOff() throws Exception {
+        Map<String, Consumer<User>> emails = new LinkedHashMap<>();
+        // Lambdas rather than method references: captureFreshly() rebuilds mailService, and a method reference would
+        // bind the instance that existed when this map was built.
+        emails.put("activation", user -> mailService.sendActivationEmail(user));
+        emails.put("creation", user -> mailService.sendCreationEmail(user));
+        emails.put("password reset", user -> mailService.sendPasswordResetMail(user));
+
+        for (Map.Entry<String, Consumer<User>> email : emails.entrySet()) {
+            String which = email.getKey();
+            MimeMessage message = captureFreshly(email.getValue());
+            String subject = message.getSubject();
+            String body = message.getContent().toString();
+
+            assertThat(subject).as("%s subject carries the brand", which).contains(BRAND);
+            assertThat(body).as("%s sign-off carries the brand", which).contains("The " + BRAND + " Team");
+            for (String offBrand : OFF_BRAND_NAMES) {
+                assertThat(subject).as("%s subject is free of '%s'", which, offBrand).doesNotContain(offBrand);
+                assertThat(body).as("%s body is free of '%s'", which, offBrand).doesNotContain(offBrand);
+            }
+        }
+    }
+
+    /**
+     * Send one email against a freshly built sender and return the message it produced.
+     *
+     * <p>{@link #setup()} stubs {@code createMimeMessage()} with a <em>single</em> {@link MimeMessage} instance, so
+     * three sends against one sender would all write into the same object and the captor would hand back three
+     * references to the last one. Rebuilding per email is what keeps them distinct.
+     */
+    private MimeMessage captureFreshly(Consumer<User> send) {
+        setup();
+        User user = new User();
+        user.setLangKey(Constants.DEFAULT_LANGUAGE);
+        user.setLogin("john");
+        user.setEmail("john.doe@example.com");
+        send.accept(user);
+        verify(javaMailSender, timeout(SEND_TIMEOUT_MS)).send(messageCaptor.capture());
+        return messageCaptor.getValue();
     }
 
     /**
