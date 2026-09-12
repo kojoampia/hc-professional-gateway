@@ -35,7 +35,14 @@ public class MongoDbTestContainer implements InitializingBean, DisposableBean {
                 .withCreateContainerCmdModifier(cmd ->
                     cmd.getHostConfig().withMemory(memoryInBytes).withMemorySwap(memorySwapInBytes).withNanoCPUs(nanoCpu)
                 ) */
-                .withLogConsumer(new Slf4jLogConsumer(log));
+                .withLogConsumer(new Slf4jLogConsumer(log))
+                // Matches api/'s container, which has asked for reuse since it was written. Reuse is
+                // opt-in on BOTH sides: this call, and testcontainers.reuse.enable=true in the developer's
+                // ~/.testcontainers.properties. Without the call the property does nothing here, which is
+                // why this repository started a cold mongo per IT class while api/ did not — see
+                // backlog.md item 28. CI is unaffected: its runners set no such property, so every class
+                // still gets a fresh container there.
+                .withReuse(true);
         }
         if (!mongodbContainer.isRunning()) {
             mongodbContainer.start();
