@@ -130,7 +130,15 @@ jhipster:
     allowed-origins: '${CORS_ALLOWED_ORIGINS:https://professional.abofonsa.com,capacitor://localhost,https://localhost,ionic://localhost}'
     allowed-methods: 'GET,POST,PUT,PATCH,DELETE,OPTIONS'
     allowed-headers: 'Authorization,Content-Type,Accept,Accept-Language,X-Requested-With'
-    exposed-headers: 'Authorization,Link,X-Total-Count,X-${jhipster.clientApp.name}-alert,X-${jhipster.clientApp.name}-error,X-${jhipster.clientApp.name}-params'
+    # X-Restricted-Parts and X-Restricted-Follow-Ups are listed because a header a browser
+    # cannot READ is the same as one never sent. `mobile/` runs at capacitor://localhost — a
+    # cross-origin caller by the allowed-origins line above — and uses Angular's HttpClient
+    # rather than CapacitorHttp, so CORS applies and the WebView hides any header not named
+    # here. Backlog items 114 and 126 shipped clients that read X-Restricted-Parts while this
+    # list did not carry it, so on mobile they parsed a header that never arrived and fell
+    # back to silence — the exact conflation those items exist to remove, reintroduced one
+    # layer below them. `web/` was unaffected: it is served same-origin with the gateway.
+    exposed-headers: 'Authorization,Link,X-Total-Count,X-${jhipster.clientApp.name}-alert,X-${jhipster.clientApp.name}-error,X-${jhipster.clientApp.name}-params,X-Restricted-Parts,X-Restricted-Follow-Ups'
     allow-credentials: false
     max-age: 1800
   http:
