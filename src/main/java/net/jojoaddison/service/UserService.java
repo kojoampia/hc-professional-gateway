@@ -279,6 +279,20 @@ public class UserService {
         return userRepository.findOneByLogin(login);
     }
 
+    /**
+     * The same read as {@link #getUserWithAuthoritiesByLogin(String)}, addressed by {@code User.id}.
+     * <p>
+     * It exists for hc-admin, which is migrating {@code Profile.accountId} to hold this id rather
+     * than the login (their item 123). The id is the stable key: {@code PUT /api/admin/users/{login}}
+     * can change a login, so a sibling holding a copy of one goes stale with nothing failing.
+     *
+     * @param id the {@code User.id} of the user to find.
+     * @return the user, or empty if no account carries that id.
+     */
+    public Mono<User> getUserWithAuthoritiesById(String id) {
+        return userRepository.findById(id);
+    }
+
     public Mono<User> getUserWithAuthorities() {
         return SecurityUtils.getCurrentUserLogin().flatMap(userRepository::findOneByLogin);
     }

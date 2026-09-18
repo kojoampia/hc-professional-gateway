@@ -294,6 +294,44 @@ public class UserResource {
     }
 
     /**
+     * {@code GET /admin/users/id/:id} : get the user carrying {@code User.id}.
+     * <p>
+     * The same record {@link #getUser(String)} serves, addressed by id instead of login, and
+     * returning the same {@link AdminUserDTO} unchanged — this exposes no field the by-login read
+     * did not already.
+     * <p>
+     * It exists for hc-admin, which is migrating {@code Profile.accountId} to hold the account's
+     * {@code User.id} rather than the login (their item 123). After that migration hc-admin holds an
+     * id, and with no endpoint here accepting one every account read would degrade to paging this
+     * whole user collection and matching on the near side. The rejected alternative was hc-admin
+     * storing our login alongside the id: that is identity mirroring, and
+     * {@code PUT /api/admin/users/{login}} can change a login, so the stored copy goes stale with
+     * nothing failing.
+     * <p>
+     * {@code ROLE_ADMIN} alone, matching {@link #getUser(String)}. Three gateways in this estate
+     * share one signing key, so "any authenticated caller" is every account in three products,
+     * including every role-less applicant — see {@code SecurityConfiguration}, whose
+     * {@code /api/admin/**} rule carries no {@code HttpMethod} qualifier and therefore gates
+     * {@code HEAD} as well as {@code GET}. Spring dispatches a {@code HEAD} to a {@code @GetMapping}
+     * handler, and a body-less read of this path is still an existence oracle; that is the hole
+     * {@code ProfileResource} shipped in backlog item 143. The {@code @PreAuthorize} below is the
+     * second layer and stays whatever the filter chain says.
+     *
+     * @param id the {@code User.id} of the user to find.
+     * @return the {@link ResponseEntity} with status {@code 200 (OK)} and with body the user, or with status {@code 404 (Not Found)}.
+     */
+    @GetMapping("/users/id/{id}")
+    @PreAuthorize("hasAuthority(\"" + AuthoritiesConstants.ADMIN + "\")")
+    public Mono<ResponseEntity<AdminUserDTO>> getUserById(@PathVariable("id") String id) {
+        log.debug("REST request to get User by id : {}", id);
+        return userService
+            .getUserWithAuthoritiesById(id)
+            .map(AdminUserDTO::new)
+            .map(ResponseEntity::ok)
+            .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND)));
+    }
+
+    /**
      * {@code DELETE /admin/users/:login} : delete the "login" User.
      *
      * @param login the login of the user to delete.
