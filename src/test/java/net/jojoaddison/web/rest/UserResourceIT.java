@@ -294,6 +294,118 @@ class UserResourceIT {
         webTestClient.get().uri("/api/admin/users/unknown").exchange().expectStatus().isNotFound();
     }
 
+    /**
+     * The by-id read, added for hc-admin's migration of {@code Profile.accountId} from a login to
+     * {@code User.id} (their item 123). Asserts the response rather than the status: it must be the
+     * same {@link AdminUserDTO} the by-login read serves, and {@code $.id} must be the id asked for
+     * — a handler that ignored the path variable and returned some other account would still be a
+     * 200 carrying a plausible user.
+     */
+    @Test
+    void getUserById() {
+        // Initialize the database
+        User saved = userRepository.save(user).block();
+
+        webTestClient
+            .get()
+            .uri("/api/admin/users/id/{id}", saved.getId())
+            .exchange()
+            .expectStatus()
+            .isOk()
+            .expectHeader()
+            .contentType(MediaType.APPLICATION_JSON)
+            .expectBody()
+            .jsonPath("$.id")
+            .isEqualTo(saved.getId())
+            .jsonPath("$.login")
+            .isEqualTo(DEFAULT_LOGIN)
+            .jsonPath("$.firstName")
+            .isEqualTo(DEFAULT_FIRSTNAME)
+            .jsonPath("$.lastName")
+            .isEqualTo(DEFAULT_LASTNAME)
+            .jsonPath("$.email")
+            .isEqualTo(DEFAULT_EMAIL)
+            .jsonPath("$.imageUrl")
+            .isEqualTo(DEFAULT_IMAGEURL)
+            .jsonPath("$.langKey")
+            .isEqualTo(DEFAULT_LANGKEY)
+            .jsonPath("$.activated")
+            .isEqualTo(true);
+
+        userRepository.deleteAll().block();
+    }
+
+    @Test
+    void getNonExistingUserById() {
+        webTestClient.get().uri("/api/admin/users/id/{id}", "no-such-id").exchange().expectStatus().isNotFound();
+    }
+
+    /**
+     * {@code ROLE_ADMIN} alone, matching the by-login read. The class-level {@code @WithMockUser} is
+     * ADMIN, so this case carries its own authorities — without them it could not detect the gate
+     * being absent at all.
+     * <p>
+     * {@code ROLE_USER} rather than a clinical role on purpose: it is the weakest authority the
+     * estate issues, it is what an applicant mid-onboarding holds, and the three gateways share one
+     * signing key, so it is also reachable with a token minted by a sibling stack.
+     */
+    @Test
+    @WithMockUser(authorities = AuthoritiesConstants.USER)
+    void aNonAdminCannotReadAnAccountById() {
+        User saved = userRepository.save(user).block();
+
+        webTestClient
+            .get()
+            .uri("/api/admin/users/id/{id}", saved.getId())
+            .accept(MediaType.APPLICATION_JSON)
+            .exchange()
+            .expectStatus()
+            .isForbidden();
+
+        userRepository.deleteAll().block();
+    }
+
+    /**
+     * The verb, not just {@code GET}. Spring dispatches a {@code HEAD} to a {@code @GetMapping}
+     * handler, and this repo shipped exactly that hole in {@code ProfileResource} (backlog item
+     * 143): a filter-chain rule scoped to {@code HttpMethod.GET} let a {@code HEAD} fall through to
+     * {@code .authenticated()}, which on quality made {@code HEAD /api/profiles/email/{known}}
+     * answer 200 and {@code {unknown}} 404 — an existence oracle with no body at all.
+     * <p>
+     * This half is the control that stops {@link #aNonAdminCannotHeadAnAccountById()} passing
+     * vacuously: it proves {@code HEAD} really does reach the handler, so the refusal there is a
+     * gate turning away a live verb rather than Spring declining to map one.
+     */
+    @Test
+    void aHeadOfTheByIdReadIsDispatchedToTheGetHandler() {
+        User saved = userRepository.save(user).block();
+
+        webTestClient.head().uri("/api/admin/users/id/{id}", saved.getId()).exchange().expectStatus().isOk();
+
+        userRepository.deleteAll().block();
+    }
+
+    /**
+     * The refusal half of the verb check — see
+     * {@link #aHeadOfTheByIdReadIsDispatchedToTheGetHandler()} for why the control matters.
+     * <p>
+     * A {@code HEAD} carries no body, so what leaks here is the status line: 200 against 404 answers
+     * "does this account exist" without returning a field. It must be refused identically to
+     * {@code GET}.
+     */
+    @Test
+    @WithMockUser(authorities = AuthoritiesConstants.USER)
+    void aNonAdminCannotHeadAnAccountById() {
+        User saved = userRepository.save(user).block();
+
+        webTestClient.head().uri("/api/admin/users/id/{id}", saved.getId()).exchange().expectStatus().isForbidden();
+
+        // And a non-existent id must be refused the same way, so the two cannot be told apart.
+        webTestClient.head().uri("/api/admin/users/id/{id}", "no-such-id").exchange().expectStatus().isForbidden();
+
+        userRepository.deleteAll().block();
+    }
+
     @Test
     void updateUser() throws Exception {
         // Initialize the database
