@@ -187,13 +187,33 @@ public class SecurityConfiguration {
                     //    professional profile, so a patient token reaching it gets nothing rather
                     //    than the estate's customers.
                     //
-                    //    THE RESIDUAL IS REAL AND IS NOT THIS RULE'S TO FIX. `ownProfileId()`
+                    //    THE RESIDUAL THIS NOTE DESCRIBED IS CLOSED — corrected 2026-09-25 by the
+                    //    sweep behind docs/backlog.md items 115 and 220. It read: "`ownProfileId()`
                     //    matches `Profile.accountId` against the token `sub`; the three gateways
                     //    share one key and this one validates no issuer, so a caller from hc-patient
                     //    WHOSE LOGIN STRING EQUALS A PROFESSIONAL'S resolves to that professional's
-                    //    profile. This matcher makes that unreachable on `/day`; it stays reachable
-                    //    through the onboarding island. Not introduced here — see docs/backlog.md
-                    //    item 27, and the `iss` work item 19 already names as the structural fix.
+                    //    profile."
+                    //
+                    //    Two of those clauses hold and the conclusion no longer follows. The key IS
+                    //    shared, and this gateway DOES validate no issuer — `validate-origin: false`
+                    //    in application.yml, off by default and deliberately, because turning it on
+                    //    rejects every token minted before TokenProvider began stamping `iss`/`aud`.
+                    //    Measured on quality 2026-09-25: a validly-signed hc-patient token
+                    //    authenticates here — 403 insufficient_scope on a route it lacks authority
+                    //    for — while a malformed one is refused 401 invalid_token. So the decoder
+                    //    works and it does accept a sibling's issuer.
+                    //
+                    //    What changed is the JOIN, not the validation. Since item 50 `ownProfileId()`
+                    //    resolves through `SecurityUtils.getCurrentAccountId()`, which reads the
+                    //    `uid` claim and DISCARDS one minted by any other issuer, with deliberately
+                    //    no fallback to the login. A foreign token therefore yields no account id and
+                    //    the resource answers 401 — measured on quality, GET on this bare path with
+                    //    an hc-patient token returns 401. The login-collision path the old note
+                    //    described cannot occur, because nothing joins on a login any more.
+                    //
+                    //    Keep this matcher for the reason stated above it rather than for that one:
+                    //    layered defence, and `/day` is the read that serves customer names and
+                    //    addresses.
                     .pathMatchers(HttpMethod.GET, "/services/professionalservice/api/duty-roster").authenticated()
                     // Everything else behind the three microservice routes — professionalservice's
                     // clinical surface, and the cross-stack patientservice and adminservice routes.
