@@ -262,7 +262,16 @@ public class AccountResource {
                         return userRepository.findOneByLogin(userLogin);
                     }))
             .switchIfEmpty(Mono.error(new AccountResourceException("User could not be found")))
-            .flatMap(user -> userService.updateUser(userDTO));
+            .flatMap(
+                user ->
+                    userService.updateUser(
+                        userDTO.getFirstName(),
+                        userDTO.getLastName(),
+                        userDTO.getEmail(),
+                        userDTO.getLangKey(),
+                        userDTO.getImageUrl()
+                    )
+            );
     }
 
     /**
