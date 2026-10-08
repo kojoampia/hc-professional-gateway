@@ -13,6 +13,7 @@ import net.jojoaddison.repository.UserRepository;
 import net.jojoaddison.security.AuthoritiesConstants;
 import net.jojoaddison.service.UserService;
 import net.jojoaddison.service.dto.AdminUserDTO;
+import net.jojoaddison.service.dto.OwnAccountDTO;
 import net.jojoaddison.service.dto.PasswordChangeDTO;
 import net.jojoaddison.web.rest.vm.KeyAndPasswordVM;
 import net.jojoaddison.web.rest.vm.ManagedUserVM;
@@ -598,6 +599,229 @@ class AccountResourceIT {
 
         User updatedUser = userRepository.findOneByLogin("save-existing-email-and-login").block();
         assertThat(updatedUser.getEmail()).isEqualTo("save-existing-email-and-login@example.com");
+    }
+
+    /**
+     * T4's happy path: {@code PUT /api/account} writes the five fields and nothing else.
+     *
+     * <p>The twin of {@code testSaveAccount}, which stays green beside it because the deprecated
+     * {@code POST} is now an adapter over the same write. Both are kept until T6 retires the verb;
+     * see {@code AccountResource#saveAccount}.
+     */
+    @Test
+    @WithMockUser("update-account")
+    void testUpdateAccount() throws Exception {
+        User user = new User();
+        user.setLogin("update-account");
+        user.setEmail("update-account@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        OwnAccountDTO accountDTO = new OwnAccountDTO(
+            "firstname",
+            "lastname",
+            "update-account@example.com",
+            Constants.DEFAULT_LANGUAGE,
+            "http://placehold.it/50x50"
+        );
+
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(om.writeValueAsBytes(accountDTO))
+            .exchange()
+            .expectStatus()
+            .isOk();
+
+        User updatedUser = userRepository.findOneByLogin(user.getLogin()).block();
+        assertThat(updatedUser.getFirstName()).isEqualTo(accountDTO.firstName());
+        assertThat(updatedUser.getLastName()).isEqualTo(accountDTO.lastName());
+        assertThat(updatedUser.getEmail()).isEqualTo(accountDTO.email());
+        assertThat(updatedUser.getLangKey()).isEqualTo(accountDTO.langKey());
+        assertThat(updatedUser.getImageUrl()).isEqualTo(accountDTO.imageUrl());
+        assertThat(updatedUser.getPassword()).isEqualTo(user.getPassword());
+    }
+
+    /**
+     * ⭐ That no privilege can arrive through the body — asserted against <b>raw JSON</b>, not a DTO.
+     *
+     * <p>{@code testSaveAccount} makes the same guarantee for {@code POST} by setting
+     * {@code activated} and {@code authorities} on an {@link AdminUserDTO} that carries them. That
+     * form cannot be written here, because {@link OwnAccountDTO} has no such components — which is
+     * the point of the type and also why asserting it needs a hand-built body. <b>A test that can
+     * only be written one way because the type forbids the other is the guarantee working</b>; the
+     * assertion exists so that widening the type later fails something.
+     */
+    @Test
+    @WithMockUser("update-account-privileges")
+    void testUpdateAccountIgnoresActivatedAndAuthorities() {
+        User user = new User();
+        user.setLogin("update-account-privileges");
+        user.setEmail("update-account-privileges@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        String body =
+            """
+            {
+              "id": "some-other-id",
+              "login": "not-used",
+              "firstName": "firstname",
+              "lastName": "lastname",
+              "email": "update-account-privileges@example.com",
+              "langKey": "en",
+              "imageUrl": "http://placehold.it/50x50",
+              "activated": false,
+              "authorities": ["ROLE_ADMIN"]
+            }
+            """;
+
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .exchange()
+            .expectStatus()
+            .isOk();
+
+        User updatedUser = userRepository.findOneByLogin("update-account-privileges").block();
+        // The five allowed fields landed...
+        assertThat(updatedUser.getFirstName()).isEqualTo("firstname");
+        // ...and nothing the body said about privilege or identity did.
+        assertThat(updatedUser.getId()).isEqualTo(user.getId());
+        assertThat(updatedUser.getLogin()).isEqualTo("update-account-privileges");
+        assertThat(updatedUser.isActivated()).isTrue();
+        assertThat(updatedUser.getAuthorities()).isEmpty();
+    }
+
+    @Test
+    @WithMockUser("update-invalid-email")
+    void testUpdateAccountInvalidEmail() throws Exception {
+        User user = new User();
+        user.setLogin("update-invalid-email");
+        user.setEmail("update-invalid-email@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        OwnAccountDTO accountDTO = new OwnAccountDTO(
+            "firstname",
+            "lastname",
+            "invalid email",
+            Constants.DEFAULT_LANGUAGE,
+            "http://placehold.it/50x50"
+        );
+
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(om.writeValueAsBytes(accountDTO))
+            .exchange()
+            .expectStatus()
+            .isBadRequest();
+
+        assertThat(userRepository.findOneByEmailIgnoreCase("invalid email").blockOptional()).isNotPresent();
+    }
+
+    @Test
+    @WithMockUser("update-existing-email")
+    void testUpdateAccountExistingEmail() throws Exception {
+        User user = new User();
+        user.setLogin("update-existing-email");
+        user.setEmail("update-existing-email@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        User anotherUser = new User();
+        anotherUser.setLogin("update-existing-email2");
+        anotherUser.setEmail("update-existing-email2@example.com");
+        anotherUser.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        anotherUser.setActivated(true);
+        userRepository.save(anotherUser).block();
+
+        OwnAccountDTO accountDTO = new OwnAccountDTO(
+            "firstname",
+            "lastname",
+            "update-existing-email2@example.com",
+            Constants.DEFAULT_LANGUAGE,
+            "http://placehold.it/50x50"
+        );
+
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(om.writeValueAsBytes(accountDTO))
+            .exchange()
+            .expectStatus()
+            .isBadRequest();
+
+        User updatedUser = userRepository.findOneByLogin("update-existing-email").block();
+        assertThat(updatedUser.getEmail()).isEqualTo("update-existing-email@example.com");
+    }
+
+    /**
+     * Re-sending one's own address is the ordinary case and must not be refused.
+     *
+     * <p>The email rule is "belongs to a different login", not "is already in use". Written as the
+     * latter it would refuse every save in which the clinician did not change their address — which
+     * is most of them.
+     */
+    @Test
+    @WithMockUser("update-existing-email-and-login")
+    void testUpdateAccountExistingEmailAndLogin() throws Exception {
+        User user = new User();
+        user.setLogin("update-existing-email-and-login");
+        user.setEmail("update-existing-email-and-login@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        OwnAccountDTO accountDTO = new OwnAccountDTO(
+            "firstname",
+            "lastname",
+            "update-existing-email-and-login@example.com",
+            Constants.DEFAULT_LANGUAGE,
+            "http://placehold.it/50x50"
+        );
+
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(om.writeValueAsBytes(accountDTO))
+            .exchange()
+            .expectStatus()
+            .isOk();
+
+        User updatedUser = userRepository.findOneByLogin("update-existing-email-and-login").block();
+        assertThat(updatedUser.getEmail()).isEqualTo("update-existing-email-and-login@example.com");
+    }
+
+    /**
+     * That the {@code .authenticated()} gate reaches the new verb.
+     *
+     * <p>{@code SecurityConfiguration} holds {@code /api/**} with no method scoping, so {@code PUT}
+     * needed no rule of its own — this asserts that rather than trusting the read of the config, and
+     * it is the case that would fail if somebody later scoped that matcher to a verb list.
+     */
+    @Test
+    @WithUnauthenticatedMockUser
+    void testUpdateAccountRequiresAuthentication() {
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("{\"firstName\":\"firstname\",\"lastName\":\"lastname\",\"langKey\":\"en\"}")
+            .exchange()
+            .expectStatus()
+            .isUnauthorized();
     }
 
     @Test
