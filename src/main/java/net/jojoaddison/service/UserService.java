@@ -136,6 +136,29 @@ public class UserService {
             });
     }
 
+    /**
+     * The administrator-created account — {@code POST /api/admin/users}, the invitation path.
+     *
+     * <h2>⛔ {@code ROLE_USER} is appended whatever the body asks for (F7)</h2>
+     *
+     * <p>{@code profile.md} § "User (account)": <i>"Always append {@code ROLE_USER} by default in the
+     * gateway."</i> <b>{@link #registerUser} did and this did not.</b> Measured:
+     * {@code AuthoritiesConstants.USER} had exactly two occurrences in {@code src/main} and neither
+     * was here, so an account created by invitation held only the authorities the administrator
+     * happened to type — and an invitation naming none produced an account with an <em>empty</em>
+     * authority set, which is not the same thing as an applicant.
+     *
+     * <p><b>Why that matters rather than being a tidiness point:</b> every {@code .authenticated()}
+     * rule in this estate serves a role-less caller, but {@code ROLE_USER} is what the surfaces
+     * <em>positively</em> name — {@code web/}'s shell routes on the authority list, and the
+     * onboarding island exists for a holder of exactly this one. "Append" is also the operative
+     * word: it is added <em>to</em> whatever the administrator asked for, never instead of it, so an
+     * invitation that grants {@code ROLE_NURSE} produces both.
+     *
+     * <p>It is a {@link java.util.Set} of {@link Authority} keyed on name, and
+     * {@code authorityRepository.findById} returns the same row for a duplicate request, so naming
+     * {@code ROLE_USER} explicitly in the body cannot produce it twice.
+     */
     public Mono<User> createUser(AdminUserDTO userDTO) {
         User user = new User();
         user.setLogin(userDTO.getLogin().toLowerCase());
@@ -150,7 +173,13 @@ public class UserService {
         } else {
             user.setLangKey(userDTO.getLangKey());
         }
-        return Flux.fromIterable(userDTO.getAuthorities() != null ? userDTO.getAuthorities() : new HashSet<>())
+        // ROLE_USER is appended to whatever the invitation asked for, never instead of it (F7).
+        // Built as a LinkedHashSet so a body that names ROLE_USER itself does not request the same
+        // row twice — and so the default is in the SAME stream as the requested ones, rather than
+        // added afterwards where a later edit to the stream could drop it.
+        Set<String> requested = new LinkedHashSet<>(userDTO.getAuthorities() != null ? userDTO.getAuthorities() : new HashSet<>());
+        requested.add(AuthoritiesConstants.USER);
+        return Flux.fromIterable(requested)
             .flatMap(authorityRepository::findById)
             .doOnNext(authority -> user.getAuthorities().add(authority))
             .then(Mono.just(user))

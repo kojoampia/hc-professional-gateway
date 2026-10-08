@@ -1,6 +1,7 @@
 package net.jojoaddison.web.rest;
 
 import jakarta.validation.Valid;
+import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import net.jojoaddison.config.Constants;
@@ -13,7 +14,6 @@ import net.jojoaddison.service.MailService;
 import net.jojoaddison.service.UserService;
 import net.jojoaddison.service.dto.AdminUserDTO;
 import net.jojoaddison.service.dto.LoginAvailabilityDTO;
-import net.jojoaddison.service.dto.OwnAccountDTO;
 import net.jojoaddison.service.dto.PasswordChangeDTO;
 import net.jojoaddison.web.rest.errors.*;
 import net.jojoaddison.web.rest.vm.KeyAndPasswordVM;
@@ -237,11 +237,13 @@ public class AccountResource {
      * and — less obviously — <b>two {@code web/} interceptors special-case this exact path</b>,
      * exempting it from the 401 sign-out ({@code auth-expired.interceptor.ts}) and from the global
      * error banner ({@code error-handler.interceptor.ts}). Narrowing it to the five fields
-     * {@link OwnAccountDTO} writes would break sign-in: {@code authorities} is what routes a
+     * the five fields the write reads would break sign-in: {@code authorities} is what routes a
      * clinician into the shell and an applicant into onboarding.
      *
-     * <p>So the read and the write are deliberately asymmetric — a wide read of one's own account and
-     * a narrow write of it — rather than one type doing both jobs.
+     * <p>⭐ <b>Since F4 the read and the write bind the SAME type</b>, {@link AdminUserDTO}, as
+     * {@code profile.md} specifies — so the asymmetry is no longer in the types but in what the
+     * write <em>reads</em> from one. {@code AccountResource#ownAccountUpdate} is where that
+     * asymmetry lives now, and it is five named getters rather than a narrower class.
      *
      * @return the current user.
      * @throws RuntimeException {@code 500 (Internal Server Error)} if the user couldn't be returned.
@@ -255,7 +257,27 @@ public class AccountResource {
     }
 
     /**
+     * The three fields {@code profile.md} forbids this endpoint from writing (F4).
+     *
+     * <p>{@code profile.md} § "User (account)", under {@code api/account}:
+     * <i>"updateUserAccount(AdminUserDTO)"</i> and <i>"Do not update the fields {@code id},
+     * {@code activated} and {@code login} from this endpoint."</i> Declared as a list because the
+     * requirement is a list — {@link #updateUserAccount} drops them structurally and
+     * {@code AccountResourceIT} asserts each one by name, and this is what the two have in common
+     * to point at.
+     *
+     * <p>⚠ <b>"Do not update" and not "refuse the request".</b> {@code GET /api/account} answers an
+     * {@link AdminUserDTO} carrying all three, step 1's dialog is populated from exactly that, and
+     * the obvious client sends the document back — so a 400 on naming them would make the endpoint
+     * unusable by the only caller the specification describes. They are ignored, the write succeeds,
+     * and the stored values stand.
+     */
+    static final List<String> FIELDS_THIS_ENDPOINT_DOES_NOT_UPDATE = List.of("id", "activated", "login");
+
+    /**
      * {@code PUT  /account} : update the current user's own account — onboarding step 1.
+     *
+     * <p><b>Named for the operation {@code profile.md} names</b>: {@code updateUserAccount(AdminUserDTO)}.
      *
      * <p><b>Subject-less, so the gate is {@code .authenticated()} and not {@code ROLE_ADMIN}.</b>
      * This path names nobody: the account is resolved from the token, and there is no identifier a
@@ -275,26 +297,48 @@ public class AccountResource {
      * written against one HTTP method is exactly how a {@code HEAD} slipped past
      * {@code ProfileResource}'s filter-chain rule while only the annotation refused it.
      *
-     * <p><b>The body is {@link OwnAccountDTO}, five fields, and that type is the whole of the
-     * authority story.</b> Nothing it carries can name an authority, an id, a login or
-     * {@code activated}, so there is no privilege for this handler to filter out — read that type's
-     * javadoc for why an allow-list beats the deny-list the handler would otherwise be.
+     * <h2>⛔ The body is {@link AdminUserDTO}, because the specification says so (F4)</h2>
      *
-     * @param accountDTO the five fields step 1 writes.
+     * <p>This bound a five-component {@code OwnAccountDTO} record, and <b>its javadoc argued that an
+     * allow-list beats a deny-list because "a deny-list must track a DTO that grows". That reasoning
+     * was overruled by the owner and the type is retired</b> — {@code profile.md} names both the
+     * operation and the bound type, and "the narrower type is safer" is not an argument against
+     * building what was specified.
+     *
+     * <p><b>What the deny-list costs, stated rather than hidden, since the overruled argument was
+     * not wrong about the mechanism:</b> a field added to {@code AdminUserDTO} for the
+     * administrator's user-management screens does arrive on this endpoint's wire for free. Two
+     * things stop that mattering, and neither is this handler remembering to drop it.
+     * {@link #ownAccountUpdate} reads <b>five values by name</b> and passes them as five arguments,
+     * so an eleventh field cannot be written by code that does not mention it; and
+     * {@code UserService.updateUser(String, String, String, String, String)} is the only write
+     * reached from here. ⛔ <b>Do not route this through
+     * {@code UserService.updateUser(AdminUserDTO)}</b> — that overload clears the authority set and
+     * refills it from the body, which is the one edit that would turn this endpoint into a
+     * privilege-escalation path.
+     *
+     * <p><b>{@code authorities} is therefore unwritable here, and that is not a deny-list entry.</b>
+     * The career role is a <em>request</em> granted after review, written on
+     * {@code ProfessionalApplication} by T3, never on the account by its holder.
+     * {@code AccountResourceIT.testSaveAccount} has always asserted that {@code activated} and
+     * {@code authorities} do not come from the request body; the {@code PUT} cases beside it assert
+     * the same, plus {@code id} and {@code login} by name.
+     *
+     * @param userDTO the account document; only the five fields step 1 edits are read.
      * @throws EmailAlreadyUsedException {@code 400 (Bad Request)} if the email belongs to another login.
      * @throws RuntimeException {@code 500 (Internal Server Error)} if the user login wasn't found.
      */
     @PutMapping("/account")
     @PreAuthorize("isAuthenticated()")
-    public Mono<Void> updateAccount(@Valid @RequestBody OwnAccountDTO accountDTO) {
-        return updateOwnAccount(accountDTO);
+    public Mono<Void> updateUserAccount(@Valid @RequestBody AdminUserDTO userDTO) {
+        return updateOwnAccount(userDTO);
     }
 
     /**
      * {@code POST  /account} : update the current user information.
      *
      * @deprecated since T4 ({@code profile.md} § "Step 1 — Complete the account"), replaced by
-     *             {@link #updateAccount(OwnAccountDTO)}. <b>Retires in T6</b>, which drops
+     *             {@link #updateUserAccount(AdminUserDTO)}. <b>Retires in T6</b>, which drops
      *             {@code SettingsComponent} — {@code web/}'s {@code AccountService.save()} is the
      *             only caller of this verb in the estate ({@code mobile/} posts the
      *             {@code /account/**} sub-paths and never this one). <b>It stays until then on the
@@ -302,13 +346,13 @@ public class AccountResource {
      *             the producer. T6 is scheduled last, so deleting this now would leave a live client
      *             calling a dead verb for the whole of T2, T3, T5, T8 and T9.
      *
-     *             <p>It is an adapter over {@link #updateOwnAccount(OwnAccountDTO)} rather than a
-     *             second copy of the write, so the two verbs cannot drift apart while both exist —
-     *             and the four {@code POST} cases in {@code AccountResourceIT} go on proving the
-     *             behaviour the {@code PUT} cases assert beside them. The {@link AdminUserDTO} fields
-     *             this narrows away ({@code id}, {@code login}, {@code activated},
-     *             {@code authorities}) were already discarded; now they are discarded in one visible
-     *             place.
+     *             <p><b>It is an adapter over the same private write</b> rather than a second copy of
+     *             it, so the two verbs cannot drift apart while both exist — and the four
+     *             {@code POST} cases in {@code AccountResourceIT} go on proving the behaviour the
+     *             {@code PUT} cases assert beside them. ⭐ Since F4 both verbs bind
+     *             {@link AdminUserDTO}, so the two are now the same request with two names and the
+     *             adapter is a one-line delegation; before it, the {@code PUT} narrowed the body
+     *             first and the shapes differed.
      *
      * @param userDTO the current user information; only the five narrow fields are read.
      * @throws EmailAlreadyUsedException {@code 400 (Bad Request)} if the email is already used.
@@ -318,15 +362,7 @@ public class AccountResource {
     @PostMapping("/account")
     @PreAuthorize("isAuthenticated()")
     public Mono<Void> saveAccount(@Valid @RequestBody AdminUserDTO userDTO) {
-        return updateOwnAccount(
-            new OwnAccountDTO(
-                userDTO.getFirstName(),
-                userDTO.getLastName(),
-                userDTO.getEmail(),
-                userDTO.getLangKey(),
-                userDTO.getImageUrl()
-            )
-        );
+        return updateOwnAccount(userDTO);
     }
 
     /**
@@ -338,17 +374,20 @@ public class AccountResource {
      * {@code PUT} twin) is what holds that open. {@code findOneByEmailIgnoreCase} plus the login
      * filter, rather than a plain existence probe, is the whole of that distinction.
      *
-     * <p>It calls {@code UserService}'s five-argument {@code updateUser} and not the
-     * {@code AdminUserDTO} overload, which clears the authority set and refills it from its body.
-     * That has always been true of this endpoint; what T4 adds is a request type that cannot carry
-     * the fields the other overload would read.
+     * <p>⛔ <b>It calls {@code UserService}'s five-argument {@code updateUser} and not the
+     * {@code AdminUserDTO} overload, which clears the authority set and refills it from its body.</b>
+     * That has always been true of this endpoint and it is the single most important line here:
+     * since F4 the bound type <em>can</em> carry {@code authorities}, {@code activated}, {@code id}
+     * and {@code login}, so the narrow overload is now what makes those four unwritable rather than
+     * a belt beside a type that had no braces to hold.
      */
-    private Mono<Void> updateOwnAccount(OwnAccountDTO accountDTO) {
+    private Mono<Void> updateOwnAccount(AdminUserDTO userDTO) {
+        OwnAccountUpdate update = ownAccountUpdate(userDTO);
         return SecurityUtils.getCurrentUserLogin()
             .switchIfEmpty(Mono.error(new AccountResourceException("Current user login not found")))
             .flatMap(userLogin ->
                 userRepository
-                    .findOneByEmailIgnoreCase(accountDTO.email())
+                    .findOneByEmailIgnoreCase(update.email())
                     .filter(existingUser -> !existingUser.getLogin().equalsIgnoreCase(userLogin))
                     .hasElement()
                     .flatMap(emailExists -> {
@@ -359,16 +398,39 @@ public class AccountResource {
                     }))
             .switchIfEmpty(Mono.error(new AccountResourceException("User could not be found")))
             .flatMap(
-                user ->
-                    userService.updateUser(
-                        accountDTO.firstName(),
-                        accountDTO.lastName(),
-                        accountDTO.email(),
-                        accountDTO.langKey(),
-                        accountDTO.imageUrl()
-                    )
+                user -> userService.updateUser(update.firstName(), update.lastName(), update.email(), update.langKey(), update.imageUrl())
             );
     }
+
+    /**
+     * The five values this endpoint writes, read off the bound document <b>by name</b>.
+     *
+     * <p>This is where {@code profile.md}'s <i>"Do not update the fields {@code id},
+     * {@code activated} and {@code login} from this endpoint"</i> is implemented, and it is
+     * implemented by <b>not reading them</b> rather than by clearing them afterwards — the
+     * difference matters, because "write it then put it back" has a window and a bug in it where
+     * "never read it" has neither. {@code authorities} is absent for the same reason and
+     * {@link #FIELDS_THIS_ENDPOINT_DOES_NOT_UPDATE} names the three the specification lists.
+     *
+     * <p>⚠ <b>A record rather than five locals, so the next field is a compile error and not an
+     * oversight.</b> The component list is the canonical constructor and is in
+     * {@code UserService.updateUser}'s parameter order, so the type and the write agree by reading
+     * rather than by checking — which is the one part of the retired {@code OwnAccountDTO}'s
+     * reasoning that survives the owner's ruling, because it is a statement about this method and
+     * not about what the endpoint binds.
+     */
+    private static OwnAccountUpdate ownAccountUpdate(AdminUserDTO userDTO) {
+        return new OwnAccountUpdate(
+            userDTO.getFirstName(),
+            userDTO.getLastName(),
+            userDTO.getEmail(),
+            userDTO.getLangKey(),
+            userDTO.getImageUrl()
+        );
+    }
+
+    /** @see #ownAccountUpdate(AdminUserDTO) */
+    private record OwnAccountUpdate(String firstName, String lastName, String email, String langKey, String imageUrl) {}
 
     /**
      * {@code POST  /account/change-password} : changes the current user's password.

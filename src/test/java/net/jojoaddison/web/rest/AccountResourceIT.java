@@ -7,13 +7,13 @@ import java.util.*;
 import java.util.stream.Stream;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.config.Constants;
+import net.jojoaddison.domain.Authority;
 import net.jojoaddison.domain.User;
 import net.jojoaddison.repository.AuthorityRepository;
 import net.jojoaddison.repository.UserRepository;
 import net.jojoaddison.security.AuthoritiesConstants;
 import net.jojoaddison.service.UserService;
 import net.jojoaddison.service.dto.AdminUserDTO;
-import net.jojoaddison.service.dto.OwnAccountDTO;
 import net.jojoaddison.service.dto.PasswordChangeDTO;
 import net.jojoaddison.web.rest.vm.KeyAndPasswordVM;
 import net.jojoaddison.web.rest.vm.ManagedUserVM;
@@ -129,8 +129,13 @@ class AccountResourceIT {
             .isEqualTo("http://placehold.it/50x50")
             .jsonPath("$.langKey")
             .isEqualTo("en")
+            // ⚠ TWO authorities since F7, and the second one is the point of that finding:
+            // profile.md says "always append ROLE_USER by default in the gateway", and
+            // UserService.createUser — the invitation path this fixture uses — appended nothing.
+            // The requested ROLE_ADMIN is still here, because "append" is not "replace";
+            // EveryAccountGetsRoleUserIT holds both halves.
             .jsonPath("$.authorities")
-            .isEqualTo(AuthoritiesConstants.ADMIN);
+            .value(org.hamcrest.Matchers.containsInAnyOrder(AuthoritiesConstants.USER, AuthoritiesConstants.ADMIN));
     }
 
     @Test
@@ -618,7 +623,7 @@ class AccountResourceIT {
         user.setActivated(true);
         userRepository.save(user).block();
 
-        OwnAccountDTO accountDTO = new OwnAccountDTO(
+        AdminUserDTO accountDTO = ownAccountBody(
             "firstname",
             "lastname",
             "update-account@example.com",
@@ -636,66 +641,187 @@ class AccountResourceIT {
             .isOk();
 
         User updatedUser = userRepository.findOneByLogin(user.getLogin()).block();
-        assertThat(updatedUser.getFirstName()).isEqualTo(accountDTO.firstName());
-        assertThat(updatedUser.getLastName()).isEqualTo(accountDTO.lastName());
-        assertThat(updatedUser.getEmail()).isEqualTo(accountDTO.email());
-        assertThat(updatedUser.getLangKey()).isEqualTo(accountDTO.langKey());
-        assertThat(updatedUser.getImageUrl()).isEqualTo(accountDTO.imageUrl());
+        assertThat(updatedUser.getFirstName()).isEqualTo(accountDTO.getFirstName());
+        assertThat(updatedUser.getLastName()).isEqualTo(accountDTO.getLastName());
+        assertThat(updatedUser.getEmail()).isEqualTo(accountDTO.getEmail());
+        assertThat(updatedUser.getLangKey()).isEqualTo(accountDTO.getLangKey());
+        assertThat(updatedUser.getImageUrl()).isEqualTo(accountDTO.getImageUrl());
         assertThat(updatedUser.getPassword()).isEqualTo(user.getPassword());
     }
 
     /**
-     * ⭐ That no privilege can arrive through the body — asserted against <b>raw JSON</b>, not a DTO.
+     * ⛔ <b>{@code profile.md}: "Do not update the fields {@code id}, {@code activated} and
+     * {@code login} from this endpoint."</b> (F4)
      *
-     * <p>{@code testSaveAccount} makes the same guarantee for {@code POST} by setting
-     * {@code activated} and {@code authorities} on an {@link AdminUserDTO} that carries them. That
-     * form cannot be written here, because {@link OwnAccountDTO} has no such components — which is
-     * the point of the type and also why asserting it needs a hand-built body. <b>A test that can
-     * only be written one way because the type forbids the other is the guarantee working</b>; the
-     * assertion exists so that widening the type later fails something.
+     * <p>Asserted against <b>raw JSON</b> rather than a DTO, and since F4 that is no longer because
+     * the type forbids writing it: {@link AdminUserDTO} is what this endpoint binds, exactly as the
+     * specification names, so all four fields below are now <em>sendable</em>. What refuses them is
+     * {@code AccountResource#ownAccountUpdate}, which reads five values by name, and
+     * {@code UserService}'s five-argument {@code updateUser}, which is the only write reached from
+     * here. ⚠ Raw JSON is kept anyway, so the case cannot be weakened by a change to a constructor.
+     *
+     * <p>⚠ <b>The request succeeds.</b> "Do not update" is not "refuse the request" —
+     * {@code GET /api/account} answers an {@code AdminUserDTO} carrying all three and the obvious
+     * client sends the document straight back, so a 400 would make the endpoint unusable by the only
+     * caller the specification describes. The five allowed fields land and the three forbidden
+     * values stand.
      */
     @Test
-    @WithMockUser("update-account-privileges")
-    void testUpdateAccountIgnoresActivatedAndAuthorities() {
+    @WithMockUser("update-account-identity")
+    void testUpdateAccountDoesNotUpdateIdActivatedOrLogin() {
         User user = new User();
-        user.setLogin("update-account-privileges");
-        user.setEmail("update-account-privileges@example.com");
+        user.setLogin("update-account-identity");
+        user.setEmail("update-account-identity@example.com");
         user.setPassword(RandomStringUtils.randomAlphanumeric(60));
         user.setActivated(true);
         userRepository.save(user).block();
 
-        String body =
+        putRawBody(
             """
             {
               "id": "some-other-id",
               "login": "not-used",
               "firstName": "firstname",
               "lastName": "lastname",
-              "email": "update-account-privileges@example.com",
+              "email": "update-account-identity@example.com",
               "langKey": "en",
               "imageUrl": "http://placehold.it/50x50",
-              "activated": false,
+              "activated": false
+            }
+            """
+        );
+
+        User updatedUser = userRepository.findOneByLogin("update-account-identity").block();
+        // The control: the five allowed fields did land, so the three below were not merely unread
+        // because the whole request was ignored.
+        assertThat(updatedUser.getFirstName()).isEqualTo("firstname");
+        assertThat(updatedUser.getId()).as("id is not updated from this endpoint").isEqualTo(user.getId());
+        assertThat(updatedUser.getLogin()).as("login is not updated from this endpoint").isEqualTo("update-account-identity");
+        assertThat(updatedUser.isActivated()).as("activated is not updated from this endpoint").isTrue();
+    }
+
+    /**
+     * ⛔ <b>And {@code authorities} is unwritable, which is not a deny-list entry but the point of the
+     * whole endpoint.</b>
+     *
+     * <p>The career role is a <em>request</em> granted after review, written on
+     * {@code ProfessionalApplication}, never on the account by its holder. The one edit that would
+     * break this is routing the handler through {@code UserService.updateUser(AdminUserDTO)}, which
+     * clears the authority set and refills it from the body — so this case is the guard on that
+     * specific mistake rather than on the field in general.
+     *
+     * <p>Two bodies, because they fail differently: granting {@code ROLE_ADMIN} to an account with
+     * none, and <em>removing</em> an authority from an account that has one. An implementation that
+     * cleared the set and refilled it would pass the first and fail the second.
+     */
+    @Test
+    @WithMockUser("update-account-authorities")
+    void testUpdateAccountDoesNotWriteAuthorities() {
+        User user = new User();
+        user.setLogin("update-account-authorities");
+        user.setEmail("update-account-authorities@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        Authority granted = new Authority();
+        granted.setName(AuthoritiesConstants.USER);
+        user.setAuthorities(new java.util.HashSet<>(java.util.Set.of(granted)));
+        userRepository.save(user).block();
+
+        putRawBody(
+            """
+            {
+              "login": "not-used",
+              "firstName": "firstname",
+              "lastName": "lastname",
+              "email": "update-account-authorities@example.com",
+              "langKey": "en",
               "authorities": ["ROLE_ADMIN"]
             }
-            """;
+            """
+        );
+
+        assertThat(userRepository.findOneByLogin("update-account-authorities").block().getAuthorities())
+            .as("a body cannot grant an authority")
+            .extracting(Authority::getName)
+            .containsExactly(AuthoritiesConstants.USER);
+
+        putRawBody(
+            """
+            {
+              "login": "not-used",
+              "firstName": "firstname",
+              "lastName": "lastname",
+              "email": "update-account-authorities@example.com",
+              "langKey": "en",
+              "authorities": []
+            }
+            """
+        );
+
+        assertThat(userRepository.findOneByLogin("update-account-authorities").block().getAuthorities())
+            .as("nor take one away — an implementation that cleared and refilled would pass the first body and fail this one")
+            .extracting(Authority::getName)
+            .containsExactly(AuthoritiesConstants.USER);
+    }
+
+    /**
+     * ⚠ <b>A body with no {@code login} is refused with a 400, and that is a consequence of binding
+     * the type the specification names.</b>
+     *
+     * <p>{@code AdminUserDTO.login} is {@code @NotBlank}, so {@code @Valid} rejects the request
+     * before the handler runs — even though {@link AccountResource#updateUserAccount} would then
+     * ignore the value. Recorded as a case rather than left to be discovered, because it is a
+     * <em>new</em> refusal: the five-component record this endpoint used to bind had no login at all
+     * and a body without one was fine.
+     *
+     * <p>It costs the caller the specification describes nothing — {@code GET /api/account} answers
+     * the login and step 1's dialog is populated from it — and it makes the two verbs refuse the
+     * same bodies, which is the property {@code AccountResource#saveAccount}'s javadoc relies on
+     * while both exist.
+     */
+    @Test
+    @WithMockUser("update-account-no-login")
+    void testUpdateAccountWithoutALoginIsRefused() {
+        User user = new User();
+        user.setLogin("update-account-no-login");
+        user.setEmail("update-account-no-login@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
 
         accountWebTestClient
             .put()
             .uri("/api/account")
             .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(body)
+            .bodyValue(
+                """
+                {
+                  "firstName": "firstname",
+                  "lastName": "lastname",
+                  "email": "update-account-no-login@example.com",
+                  "langKey": "en"
+                }
+                """
+            )
             .exchange()
             .expectStatus()
-            .isOk();
+            .isBadRequest();
 
-        User updatedUser = userRepository.findOneByLogin("update-account-privileges").block();
-        // The five allowed fields landed...
-        assertThat(updatedUser.getFirstName()).isEqualTo("firstname");
-        // ...and nothing the body said about privilege or identity did.
-        assertThat(updatedUser.getId()).isEqualTo(user.getId());
-        assertThat(updatedUser.getLogin()).isEqualTo("update-account-privileges");
-        assertThat(updatedUser.isActivated()).isTrue();
-        assertThat(updatedUser.getAuthorities()).isEmpty();
+        assertThat(userRepository.findOneByLogin("update-account-no-login").block().getFirstName())
+            .as("a refused request writes nothing")
+            .isNull();
+    }
+
+    /**
+     * The list in the handler names the three fields the specification names, and nothing else.
+     *
+     * <p>A constant nothing compares against is prose; this is what ties
+     * {@code AccountResource.FIELDS_THIS_ENDPOINT_DOES_NOT_UPDATE} to the two cases above, so that
+     * adding a fourth name to it without a case, or removing one that has a case, goes red.
+     */
+    @Test
+    void theForbiddenFieldListIsTheOneTheSpecificationNames() {
+        assertThat(AccountResource.FIELDS_THIS_ENDPOINT_DOES_NOT_UPDATE).containsExactly("id", "activated", "login");
     }
 
     @Test
@@ -708,7 +834,7 @@ class AccountResourceIT {
         user.setActivated(true);
         userRepository.save(user).block();
 
-        OwnAccountDTO accountDTO = new OwnAccountDTO(
+        AdminUserDTO accountDTO = ownAccountBody(
             "firstname",
             "lastname",
             "invalid email",
@@ -745,7 +871,7 @@ class AccountResourceIT {
         anotherUser.setActivated(true);
         userRepository.save(anotherUser).block();
 
-        OwnAccountDTO accountDTO = new OwnAccountDTO(
+        AdminUserDTO accountDTO = ownAccountBody(
             "firstname",
             "lastname",
             "update-existing-email2@example.com",
@@ -783,7 +909,7 @@ class AccountResourceIT {
         user.setActivated(true);
         userRepository.save(user).block();
 
-        OwnAccountDTO accountDTO = new OwnAccountDTO(
+        AdminUserDTO accountDTO = ownAccountBody(
             "firstname",
             "lastname",
             "update-existing-email-and-login@example.com",
@@ -1061,5 +1187,49 @@ class AccountResourceIT {
             .exchange()
             .expectStatus()
             .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    // -------------------------------------------------------------------------------------------------
+    // PUT /api/account helpers (F4)
+    // -------------------------------------------------------------------------------------------------
+
+    /**
+     * An {@link AdminUserDTO} carrying only the five fields step 1 edits.
+     *
+     * <p>⚠ <b>It deliberately leaves {@code id}, {@code login}, {@code activated} and
+     * {@code authorities} unset rather than being a narrower type that cannot hold them</b> — since
+     * F4 the endpoint binds {@code AdminUserDTO}, as {@code profile.md} names, so the happy-path
+     * cases send what a well-behaved client sends and
+     * {@link #testUpdateAccountDoesNotUpdateIdActivatedOrLogin} sends what a careless one does.
+     */
+    private static AdminUserDTO ownAccountBody(String firstName, String lastName, String email, String langKey, String imageUrl) {
+        AdminUserDTO accountDTO = new AdminUserDTO();
+        // ⚠ A login is REQUIRED on the wire and IGNORED by the write, which is a real consequence of
+        // binding the type profile.md names: AdminUserDTO.login is @NotBlank, so @Valid refuses a
+        // body without one with a 400 before the handler runs. It is not a hardship for the caller
+        // the specification describes — GET /api/account answers the login and step 1's dialog is
+        // populated from exactly that — and the deprecated POST has always behaved this way, which
+        // is the property this file's javadoc calls "both verbs refuse the same bodies". The value
+        // is deliberately not the caller's, so a case that passed because the login was honoured
+        // would be visible.
+        accountDTO.setLogin("not-used");
+        accountDTO.setFirstName(firstName);
+        accountDTO.setLastName(lastName);
+        accountDTO.setEmail(email);
+        accountDTO.setLangKey(langKey);
+        accountDTO.setImageUrl(imageUrl);
+        return accountDTO;
+    }
+
+    /** {@code PUT /api/account} with a hand-built body, expecting 200. */
+    private void putRawBody(String body) {
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .exchange()
+            .expectStatus()
+            .isOk();
     }
 }
