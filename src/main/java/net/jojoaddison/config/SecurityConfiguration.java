@@ -139,6 +139,35 @@ public class SecurityConfiguration {
                     //    it: a gateway stricter than the service it fronts refuses a request the
                     //    service was written to serve, and the refusal is attributed to the service.
                     .pathMatchers("/services/professionalservice/api/onboarding/**").authenticated()
+                    //    AND THE SAME ISLAND NOW CARRIES A SECOND PATH, for the same caller and by
+                    //    the same reasoning extended rather than re-argued (profile.md T1/T0).
+                    //    `/api/profile` — singular — is the applicant's own profile, which
+                    //    profile.md's step 2 moves off `/api/onboarding/profile`. The mirroring
+                    //    requirement above is what makes this line mandatory rather than tidy:
+                    //    api/SecurityConfiguration holds `/api/profile` at .authenticated(), so
+                    //    without this rule the request is refused HERE, at
+                    //    `/services/** -> CLINICAL_AND_ADMIN` below, and the applicant sees their own
+                    //    profile fail with the blame landing on a service that was written to serve
+                    //    them. The two rules are one change in two repositories.
+                    //
+                    //    EXACT PATH, NOT A PREFIX. `/api/profile` has no sub-resources; T2's
+                    //    `/api/personal-document` and T3's `/api/professional-application` are
+                    //    separate paths and get their own rules with their own tasks. A `/**` here
+                    //    would pre-authorise paths nobody has designed yet.
+                    //
+                    //    METHOD-AGNOSTIC, SO HEAD AND PUT ARE BOTH COVERED. Step 2 WRITES through
+                    //    this path, so a GET-scoped matcher would admit the read and refuse the save
+                    //    — and Spring dispatches a HEAD to the @GetMapping handler besides, which is
+                    //    the omission UserResource.java:313-318 records as a real fail-open on the
+                    //    plural path. Nothing under /api/profile is an existence oracle, because the
+                    //    path names nobody but the caller.
+                    //
+                    //    NOTE `/api/profile` DOES NOT MATCH `/api/profiles`. The service's ROLE_ADMIN
+                    //    read gate is on the plural literal and `/api/profiles/**`, and the clinician
+                    //    directory behind it stays where it is — refused to a role-less caller by the
+                    //    authority rule below. ServicesRouteAuthorizationIT asserts that both ways
+                    //    round, since it is a claim about pattern matching rather than about intent.
+                    .pathMatchers("/services/professionalservice/api/profile").authenticated()
                     // 2. Messaging — EXACTLY THE THREE GETS THE SHELL FIRES BY ITSELF, and no more.
                     //    `MessagesApiService` is injected by the shell, the sidebar and the tab bar
                     //    and loads `conversations` + `unread-count` on every signed-in page for

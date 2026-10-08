@@ -390,6 +390,104 @@ class ServicesRouteAuthorizationIT {
             .isForbidden();
     }
 
+    // --- /api/profile (singular): the applicant's own profile, T0's second island path ---------
+    //
+    // profile.md's step 2 moves the applicant's profile write off /api/onboarding/profile and onto
+    // `/api/profile`. api/SecurityConfiguration holds that path at .authenticated(), so this gateway
+    // must mirror it — a gateway stricter than the service it fronts refuses a request the service
+    // was written to serve, AND THE REFUSAL IS ATTRIBUTED TO THE SERVICE. The two rules are one
+    // change in two repositories; ClinicalAuthorityMatrixIT holds the service's half.
+
+    /** The read, by an account holding nothing but {@code ROLE_USER} — which is every applicant. */
+    @Test
+    void aRoleLessApplicantReachesTheirOwnProfile() {
+        expectPastAuthorization("/services/professionalservice/api/profile", AuthoritiesConstants.USER);
+    }
+
+    /**
+     * And the write, which is the half the service's mutation matrix would otherwise refuse and the
+     * half a {@code GET}-scoped matcher here would silently drop.
+     *
+     * <p>Step 2 <b>writes</b> through this path. A matcher scoped to {@code HttpMethod.GET} would
+     * admit the read and refuse the save, and the symptom — an applicant whose profile loads and
+     * will not save — reads as a broken endpoint rather than as a narrow rule.
+     */
+    @Test
+    void aRoleLessApplicantMayWriteTheirOwnProfile() {
+        webTestClient
+            .put()
+            .uri("/services/professionalservice/api/profile")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+    }
+
+    /**
+     * And a {@code HEAD} of it, the verb a {@code GET}-scoped rule drops.
+     *
+     * <p>Spring dispatches a {@code HEAD} to a {@code @GetMapping} handler, and
+     * {@code gateway/UserResource.java:313-318} records why that matters in prose: a body-less read
+     * of a subject-addressed path is still an existence oracle, which is the hole
+     * {@code ProfileResource} shipped in backlog item 143. ⚠ <b>This path is not such an oracle</b> —
+     * it names nobody but the caller — so the case is here for the weaker but still real reason: a
+     * method-scoped rule answers the same request under a different authority depending on the verb.
+     */
+    @Test
+    void aRoleLessApplicantsHeadOfTheirOwnProfileIsNotRefused() {
+        webTestClient
+            .head()
+            .uri("/services/professionalservice/api/profile")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+    }
+
+    /**
+     * ⚠ <b>The singular island does not open the plural clinician directory.</b>
+     *
+     * <p>{@code /api/profile} is a prefix of {@code /api/profiles} as a string, so "does the new
+     * matcher reach the old path" is a question about Spring's pattern matching that reading two
+     * configuration files cannot settle. Both directions are asserted: the applicant above reaches
+     * the singular path, and the same applicant is still refused the plural one here — where the
+     * service additionally holds {@code ROLE_ADMIN}, but this rule is what stops the request
+     * arriving at all.
+     */
+    @ParameterizedTest
+    @ValueSource(
+        strings = {
+            "/services/professionalservice/api/profiles",
+            "/services/professionalservice/api/profiles/any-id",
+            "/services/professionalservice/api/profiles/account/any-account",
+        }
+    )
+    void theOwnProfileIslandDoesNotExtendToThePluralDirectory(String path) {
+        expectForbidden(path, AuthoritiesConstants.USER);
+    }
+
+    /**
+     * Nor does it extend sideways: the island is the exact path and nothing under it.
+     *
+     * <p>T2's {@code /api/personal-document} and T3's {@code /api/professional-application} are
+     * separate paths that arrive with their own tasks and their own rules. A {@code /**} matcher here
+     * would pre-authorise paths nobody has designed yet, which is how an island stops being a list of
+     * decisions and becomes a prefix.
+     */
+    @ParameterizedTest
+    @ValueSource(
+        strings = { "/services/professionalservice/api/profile/anything", "/services/professionalservice/api/profile/account/any-account" }
+    )
+    void theOwnProfileIslandIsTheExactPathAndNothingUnderIt(String path) {
+        expectForbidden(path, AuthoritiesConstants.USER);
+    }
+
+    /** A token this gateway did not mint gets the island too, and that is the island's whole design. */
+    @Test
+    void aTokenBearingTheCareAngelAuthorityAlsoReachesTheOwnProfilePath() {
+        expectPastAuthorization("/services/professionalservice/api/profile", "ROLE_ANGEL");
+    }
+
     // --- what this change must not have weakened --------------------------------------------
 
     /** Unauthenticated is still 401, on every one of them, island or not. */
@@ -400,6 +498,7 @@ class ServicesRouteAuthorizationIT {
             PATIENT_SERVICE,
             ADMIN_SERVICE,
             "/services/professionalservice/api/onboarding/progress",
+            "/services/professionalservice/api/profile",
             "/services/professionalservice/api/messaging/unread-count",
             "/services/professionalservice/api/duty-roster",
         }
