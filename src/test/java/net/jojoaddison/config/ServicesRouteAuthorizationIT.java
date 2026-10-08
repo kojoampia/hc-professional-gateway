@@ -469,10 +469,11 @@ class ServicesRouteAuthorizationIT {
     /**
      * Nor does it extend sideways: the island is the exact path and nothing under it.
      *
-     * <p>T2's {@code /api/personal-document} and T3's {@code /api/professional-application} are
-     * separate paths that arrive with their own tasks and their own rules. A {@code /**} matcher here
-     * would pre-authorise paths nobody has designed yet, which is how an island stops being a list of
-     * decisions and becomes a prefix.
+     * <p>{@code /api/personal-document} and T3's {@code /api/professional-application} are separate
+     * paths with their own tasks and their own rules — the first of those has since arrived and has
+     * its own cases below, including the prefix it genuinely needs and this one does not. A
+     * {@code /**} matcher here would pre-authorise paths nobody has designed yet, which is how an
+     * island stops being a list of decisions and becomes a prefix.
      */
     @ParameterizedTest
     @ValueSource(
@@ -488,6 +489,91 @@ class ServicesRouteAuthorizationIT {
         expectPastAuthorization("/services/professionalservice/api/profile", "ROLE_ANGEL");
     }
 
+    // --- /api/personal-document (singular): the applicant's own credentials, T0 for T2 ------------
+    //
+    // profile.md's step 3 moves the applicant's document upload off /api/onboarding/documents and
+    // onto `/api/personal-document`. api/SecurityConfiguration holds that path AND the prefix under it
+    // at .authenticated(), so this gateway must mirror both — a gateway stricter than the service it
+    // fronts refuses a request the service was written to serve, AND THE REFUSAL IS ATTRIBUTED TO THE
+    // SERVICE. ClinicalAuthorityMatrixIT holds the service's half.
+    //
+    // THIS ISLAND IS A PREFIX AND /api/profile's IS NOT. That is not an inconsistency: this path has a
+    // real sub-resource, /{id}/content, which is the only route by which document bytes leave
+    // professionalservice. A prefix is a widening, so the cases below assert where it STOPS as
+    // carefully as what it admits.
+
+    /** The list, by an account holding nothing but {@code ROLE_USER} — which is every applicant. */
+    @Test
+    void aRoleLessApplicantReachesTheirOwnDocuments() {
+        expectPastAuthorization("/services/professionalservice/api/personal-document", AuthoritiesConstants.USER);
+    }
+
+    /**
+     * And the <b>upload</b>, which is the half the service's mutation matrix would otherwise refuse
+     * and the half a {@code GET}-scoped matcher here would silently drop.
+     *
+     * <p>Step 3 writes through this path. A matcher scoped to {@code HttpMethod.GET} would admit the
+     * list and refuse the upload, and the symptom — an applicant whose documents screen loads and
+     * will not accept a file — reads as a broken upload rather than as a narrow rule.
+     */
+    @Test
+    void aRoleLessApplicantMayPostTheirOwnDocument() {
+        webTestClient
+            .post()
+            .uri("/services/professionalservice/api/personal-document")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+    }
+
+    /** And a {@code HEAD} of the list, the verb a {@code GET}-scoped rule drops. */
+    @Test
+    void aRoleLessApplicantsHeadOfTheirOwnDocumentsIsNotRefused() {
+        webTestClient
+            .head()
+            .uri("/services/professionalservice/api/personal-document")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+    }
+
+    /** The sub-resource the prefix exists for — the authorized byte stream. */
+    @Test
+    void aRoleLessApplicantReachesTheDocumentContentSubResource() {
+        expectPastAuthorization("/services/professionalservice/api/personal-document/any-id/content", AuthoritiesConstants.USER);
+    }
+
+    /**
+     * ⛔ <b>The prefix stops at the singular path and does not reach the plural CRUD surface.</b>
+     *
+     * <p>{@code /api/personal-document} is a prefix of {@code /api/personal-documents} as a string, so
+     * "does the new matcher reach the old path" is a question about Spring's pattern matching that
+     * reading two configuration files cannot settle. ⚠ <b>The stakes here are higher than on
+     * {@code /api/profile}</b>: {@code PersonalDocumentResource}'s three reads carry no authority
+     * check of their own and return {@code data} inline (profile-addendum.md S1), so the authority
+     * rule below is the only thing keeping a role-less applicant — and every account in the two
+     * sibling products, over the shared signing key — away from every clinician's identity documents.
+     */
+    @ParameterizedTest
+    @ValueSource(
+        strings = {
+            "/services/professionalservice/api/personal-documents",
+            "/services/professionalservice/api/personal-documents/any-id",
+            "/services/professionalservice/api/personal-documents/profile/any-profile",
+        }
+    )
+    void theOwnDocumentIslandDoesNotExtendToThePluralCrudSurface(String path) {
+        expectForbidden(path, AuthoritiesConstants.USER);
+    }
+
+    /** A token this gateway did not mint gets this island too, for the reason the island exists. */
+    @Test
+    void aTokenBearingTheCareAngelAuthorityAlsoReachesTheOwnDocumentPath() {
+        expectPastAuthorization("/services/professionalservice/api/personal-document", "ROLE_ANGEL");
+    }
+
     // --- what this change must not have weakened --------------------------------------------
 
     /** Unauthenticated is still 401, on every one of them, island or not. */
@@ -499,6 +585,8 @@ class ServicesRouteAuthorizationIT {
             ADMIN_SERVICE,
             "/services/professionalservice/api/onboarding/progress",
             "/services/professionalservice/api/profile",
+            "/services/professionalservice/api/personal-document",
+            "/services/professionalservice/api/personal-document/any-id/content",
             "/services/professionalservice/api/messaging/unread-count",
             "/services/professionalservice/api/duty-roster",
         }

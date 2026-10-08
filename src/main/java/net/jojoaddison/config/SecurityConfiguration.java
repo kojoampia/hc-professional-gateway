@@ -168,6 +168,37 @@ public class SecurityConfiguration {
                     //    authority rule below. ServicesRouteAuthorizationIT asserts that both ways
                     //    round, since it is a claim about pattern matching rather than about intent.
                     .pathMatchers("/services/professionalservice/api/profile").authenticated()
+                    //    AND A THIRD PATH IN THE SAME ISLAND, for the same caller again (profile.md
+                    //    step 3, T2). `/api/personal-document` — singular — is the applicant's own
+                    //    credential upload and own document list, which profile.md's step 3 moves off
+                    //    `/api/onboarding/documents`. api/SecurityConfiguration holds the same two
+                    //    patterns at .authenticated(), so the mirroring requirement above makes these
+                    //    lines mandatory rather than tidy: without them the request is refused HERE,
+                    //    at `/services/** -> CLINICAL_AND_ADMIN` below, and an applicant's upload
+                    //    fails with the blame landing on a service written to serve them.
+                    //
+                    //    A PREFIX THIS TIME, AND THAT IS NOT AN INCONSISTENCY WITH THE LINE ABOVE.
+                    //    `/api/profile` is the exact path because it has no sub-resources; this one
+                    //    genuinely has one — `/{id}/content`, the only route by which document bytes
+                    //    leave professionalservice, read by the applicant for a thumbnail and by a
+                    //    reviewer for the scan. Both patterns are spelled because
+                    //    `/api/personal-document/**` does not match `/api/personal-document`.
+                    //
+                    //    IT STOPS AT THE SINGULAR PATH. `/api/personal-documents` — PLURAL — is the
+                    //    generated CRUD surface, whose three GETs return document bytes INLINE with no
+                    //    ownership check at all (profile-addendum.md S1). Today the authority rule
+                    //    below is the only thing keeping a role-less applicant and a sibling stack's
+                    //    token away from it, so a matcher that reached the plural path would hand
+                    //    every clinician's identity documents to every account in three products.
+                    //    ServicesRouteAuthorizationIT asserts the separation, since it is a claim
+                    //    about pattern matching rather than about intent.
+                    //
+                    //    METHOD-AGNOSTIC, SO POST AND HEAD ARE BOTH COVERED. Step 3 WRITES through
+                    //    this path, so a GET-scoped matcher would admit the list and refuse the
+                    //    upload; and Spring dispatches a HEAD to the @GetMapping handler besides,
+                    //    which is the omission UserResource.java:313-318 records as a real fail-open.
+                    .pathMatchers("/services/professionalservice/api/personal-document", "/services/professionalservice/api/personal-document/**")
+                    .authenticated()
                     // 2. Messaging — EXACTLY THE THREE GETS THE SHELL FIRES BY ITSELF, and no more.
                     //    `MessagesApiService` is injected by the shell, the sidebar and the tab bar
                     //    and loads `conversations` + `unread-count` on every signed-in page for
