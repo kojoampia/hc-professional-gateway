@@ -150,10 +150,11 @@ public class SecurityConfiguration {
                     //    profile fail with the blame landing on a service that was written to serve
                     //    them. The two rules are one change in two repositories.
                     //
-                    //    EXACT PATH, NOT A PREFIX. `/api/profile` has no sub-resources; T2's
-                    //    `/api/personal-document` and T3's `/api/professional-application` are
-                    //    separate paths and get their own rules with their own tasks. A `/**` here
-                    //    would pre-authorise paths nobody has designed yet.
+                    //    EXACT PATH, NOT A PREFIX. `/api/profile` has no sub-resources;
+                    //    `/api/personal-document` (T2) and `/api/professional-application` (T3) are
+                    //    separate paths with their own rules below, each a prefix because each
+                    //    genuinely has sub-resources. A `/**` here would pre-authorise paths nobody
+                    //    has designed yet.
                     //
                     //    METHOD-AGNOSTIC, SO HEAD AND PUT ARE BOTH COVERED. Step 2 WRITES through
                     //    this path, so a GET-scoped matcher would admit the read and refuse the save
@@ -198,6 +199,46 @@ public class SecurityConfiguration {
                     //    upload; and Spring dispatches a HEAD to the @GetMapping handler besides,
                     //    which is the omission UserResource.java:313-318 records as a real fail-open.
                     .pathMatchers("/services/professionalservice/api/personal-document", "/services/professionalservice/api/personal-document/**")
+                    .authenticated()
+                    //    AND A FOURTH PATH IN THE SAME ISLAND, for the same caller again (profile.md
+                    //    step 4, T3). `/api/professional-application` — singular — is the applicant's
+                    //    own application: the consent, the authority they are applying for and the
+                    //    submission, which profile.md's step 4 moves off
+                    //    `/api/onboarding/applications`. api/SecurityConfiguration holds the same two
+                    //    patterns at .authenticated(), so the mirroring requirement at the head of
+                    //    this block makes these lines mandatory rather than tidy: without them an
+                    //    applicant's step 4 is refused HERE, at
+                    //    `/services/** -> CLINICAL_AND_ADMIN` below, and the failure lands on a
+                    //    service written to serve them. These lines REPLACE what
+                    //    `/api/onboarding/**` gave the fifteen migrated mappings; they are not an
+                    //    addition.
+                    //
+                    //    A PREFIX, LIKE /api/personal-document AND UNLIKE /api/profile. This path
+                    //    genuinely has sub-resources — `/me`, `/me/submit`,
+                    //    `/me/complete-profile` — and both patterns are spelled because
+                    //    `/api/professional-application/**` does not match the bare path, which is
+                    //    where the applicant POSTs.
+                    //
+                    //    THE PREFIX IS WIDER THAN THE APPLICANT'S OWN SURFACE, AND THAT IS
+                    //    DELIBERATE RATHER THAN AN OVERSIGHT. It also covers the review queue, the
+                    //    seven reviewer transitions and `/compliance/**`, which are ROLE_ADMIN. The
+                    //    gateway is not where that is decided: api/SecurityConfiguration carries
+                    //    ROLE_ADMIN rules on exactly those sub-paths AND a @PreAuthorize on each
+                    //    handler, and a gateway stricter than the service it fronts refuses requests
+                    //    the service was written to serve. Narrowing this to `/me` alone would
+                    //    break the three shipped admin pages, since `/services/** ->
+                    //    CLINICAL_AND_ADMIN` admits every clinical role and not just ROLE_ADMIN —
+                    //    so it would be a LOOSER answer for a doctor and a broken one for an admin.
+                    //
+                    //    METHOD-AGNOSTIC, SO POST, PUT AND HEAD ARE ALL COVERED. Step 4 WRITES
+                    //    through this path twice over — the create and the submit — so a GET-scoped
+                    //    matcher would admit the read and refuse both; and Spring dispatches a HEAD
+                    //    to the @GetMapping handler besides, which is the omission
+                    //    UserResource.java:313-318 records as a real fail-open.
+                    .pathMatchers(
+                        "/services/professionalservice/api/professional-application",
+                        "/services/professionalservice/api/professional-application/**"
+                    )
                     .authenticated()
                     // 2. Messaging — EXACTLY THE THREE GETS THE SHELL FIRES BY ITSELF, and no more.
                     //    `MessagesApiService` is injected by the shell, the sidebar and the tab bar
