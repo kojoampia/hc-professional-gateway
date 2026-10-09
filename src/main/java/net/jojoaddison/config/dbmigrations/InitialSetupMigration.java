@@ -120,14 +120,14 @@ public class InitialSetupMigration implements ApplicationRunner {
         }
 
         saveUserIfMissing("user", () -> createUser(userAuthority));
-        saveUserIfMissing("doctor", () -> createProfessional(doctorAuthority, "doctor"));
-        saveUserIfMissing("nurse", () -> createProfessional(nurseAuthority, "nurse"));
-        saveUserIfMissing("carer", () -> createProfessional(carerAuthority, "carer"));
-        saveUserIfMissing("paramedic", () -> createProfessional(paramedicAuthority, "paramedic"));
-        saveUserIfMissing("pharmacist", () -> createProfessional(pharmacistAuthority, "pharmacist"));
-        saveUserIfMissing("therapist", () -> createProfessional(therapistAuthority, "therapist"));
-        saveUserIfMissing("chemist", () -> createProfessional(chemistAuthority, "chemist"));
-        saveUserIfMissing("technician", () -> createProfessional(technicianAuthority, "technician"));
+        saveUserIfMissing("doctor", () -> createProfessional(doctorAuthority, userAuthority, "doctor"));
+        saveUserIfMissing("nurse", () -> createProfessional(nurseAuthority, userAuthority, "nurse"));
+        saveUserIfMissing("carer", () -> createProfessional(carerAuthority, userAuthority, "carer"));
+        saveUserIfMissing("paramedic", () -> createProfessional(paramedicAuthority, userAuthority, "paramedic"));
+        saveUserIfMissing("pharmacist", () -> createProfessional(pharmacistAuthority, userAuthority, "pharmacist"));
+        saveUserIfMissing("therapist", () -> createProfessional(therapistAuthority, userAuthority, "therapist"));
+        saveUserIfMissing("chemist", () -> createProfessional(chemistAuthority, userAuthority, "chemist"));
+        saveUserIfMissing("technician", () -> createProfessional(technicianAuthority, userAuthority, "technician"));
         logger.info("Initial setup migration completed successfully");
     }
 
@@ -142,6 +142,16 @@ public class InitialSetupMigration implements ApplicationRunner {
         return adminAuthority;
     }
 
+    /**
+     * ⚠ <b>This creates the {@code Authority} ROW. It grants nothing to anybody.</b>
+     *
+     * <p>Spelled out because the distinction cost a finding: the F7 sweep for "does every creation
+     * path append {@code ROLE_USER}" grepped for {@code AuthoritiesConstants.USER}, found two
+     * occurrences in {@code src/main}, and one of them was this line — which reads like a grant and
+     * is a row in the {@code jhi_authority} collection. {@link #createProfessional} was left granting
+     * only a discipline for another two weeks. <b>Grep for the grant</b>
+     * ({@code getAuthorities().add}, {@code setAuthorities}), not for the constant.
+     */
     private Authority createUserAuthority() {
         Authority userAuthority = createAuthority(AuthoritiesConstants.USER);
         return userAuthority;
@@ -248,7 +258,36 @@ public class InitialSetupMigration implements ApplicationRunner {
         return adminUser;
     }
 
-    private User createProfessional(Authority professionalAuthority, String login) {
+    /**
+     * One demo clinician per discipline — and <b>{@code ROLE_USER} beside the discipline</b> (F-A).
+     *
+     * <h2>⛔ The third creation path, and the one the F7 sweep missed</h2>
+     *
+     * <p>{@code profile.md} § "User (account)": <i>"Always append {@code ROLE_USER} by default in the
+     * gateway."</i> {@code UserService.registerUser} always has and {@code UserService.createUser}
+     * does since F7; <b>this method added the discipline and nothing else</b>, so all eight seeded
+     * clinicians held exactly one authority. {@link #createAdmin} two methods away already granted
+     * both, so the correct shape was in this very file.
+     *
+     * <p>⚠ <b>Why the sweep that fixed the other two did not see it.</b> It recorded that
+     * {@code AuthoritiesConstants.USER} had two occurrences in {@code src/main} and that neither was
+     * in {@code createUser} — and <b>one of those two is in this file</b>, at
+     * {@link #createUserAuthority()}, which creates the {@code Authority} <em>row</em> rather than
+     * granting it to anybody. A constant that names an authority and a statement that grants one look
+     * alike and are not; {@code EveryAccountGetsRoleUserIT} now enumerates the construction sites
+     * from source rather than searching for the constant.
+     *
+     * <p><b>Production was never affected and the demo stacks were.</b> Under {@code prod} only
+     * {@code admin} is seeded, and {@code admin} carries {@code ROLE_USER}; every {@code dev} and
+     * {@code test} stack — including {@code quality/} — seeded eight clinicians a surface keyed on
+     * {@code ROLE_USER} would not positively name. The guards are idempotent, so an existing account
+     * is left as it is: a database seeded before this change keeps its one-authority clinicians until
+     * they are re-created, which {@code quality/}'s {@code startup.sh --clean} does.
+     *
+     * @param professionalAuthority the discipline this demo account exists to exercise.
+     * @param userAuthority {@code ROLE_USER}, appended to the discipline and never instead of it.
+     */
+    private User createProfessional(Authority professionalAuthority, Authority userAuthority, String login) {
         User professionalUser = new User();
         String password = derivedPassword(login);
         professionalUser.setId(UUID.randomUUID().toString());
@@ -262,6 +301,8 @@ public class InitialSetupMigration implements ApplicationRunner {
         professionalUser.setCreatedBy(Constants.SYSTEM);
         professionalUser.setCreatedDate(Instant.now());
         professionalUser.getAuthorities().add(professionalAuthority);
+        // Appended, never instead of the discipline — see the javadoc. This line is F-A.
+        professionalUser.getAuthorities().add(userAuthority);
         return professionalUser;
     }
 }
