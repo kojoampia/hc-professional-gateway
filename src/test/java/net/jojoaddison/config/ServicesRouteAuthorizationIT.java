@@ -249,7 +249,7 @@ class ServicesRouteAuthorizationIT {
         strings = {
             "/services/professionalservice/api/onboarding",
             "/services/professionalservice/api/onboarding/progress",
-            "/services/professionalservice/api/onboarding/applications/me",
+            "/services/professionalservice/api/professional-application/me",
             "/services/professionalservice/api/messaging/unread-count",
             "/services/professionalservice/api/messaging/conversations",
             "/services/professionalservice/api/messaging/messages/any-message",
@@ -390,6 +390,306 @@ class ServicesRouteAuthorizationIT {
             .isForbidden();
     }
 
+    // --- /api/profile (singular): the applicant's own profile, T0's second island path ---------
+    //
+    // profile.md's step 2 moves the applicant's profile write off /api/onboarding/profile and onto
+    // `/api/profile`. api/SecurityConfiguration holds that path at .authenticated(), so this gateway
+    // must mirror it — a gateway stricter than the service it fronts refuses a request the service
+    // was written to serve, AND THE REFUSAL IS ATTRIBUTED TO THE SERVICE. The two rules are one
+    // change in two repositories; ClinicalAuthorityMatrixIT holds the service's half.
+
+    /** The read, by an account holding nothing but {@code ROLE_USER} — which is every applicant. */
+    @Test
+    void aRoleLessApplicantReachesTheirOwnProfile() {
+        expectPastAuthorization("/services/professionalservice/api/profile", AuthoritiesConstants.USER);
+    }
+
+    /**
+     * And the write, which is the half the service's mutation matrix would otherwise refuse and the
+     * half a {@code GET}-scoped matcher here would silently drop.
+     *
+     * <p>Step 2 <b>writes</b> through this path. A matcher scoped to {@code HttpMethod.GET} would
+     * admit the read and refuse the save, and the symptom — an applicant whose profile loads and
+     * will not save — reads as a broken endpoint rather than as a narrow rule.
+     */
+    @Test
+    void aRoleLessApplicantMayWriteTheirOwnProfile() {
+        webTestClient
+            .put()
+            .uri("/services/professionalservice/api/profile")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+    }
+
+    /**
+     * And a {@code HEAD} of it, the verb a {@code GET}-scoped rule drops.
+     *
+     * <p>Spring dispatches a {@code HEAD} to a {@code @GetMapping} handler, and
+     * {@code gateway/UserResource.java:313-318} records why that matters in prose: a body-less read
+     * of a subject-addressed path is still an existence oracle, which is the hole
+     * {@code ProfileResource} shipped in backlog item 143. ⚠ <b>This path is not such an oracle</b> —
+     * it names nobody but the caller — so the case is here for the weaker but still real reason: a
+     * method-scoped rule answers the same request under a different authority depending on the verb.
+     */
+    @Test
+    void aRoleLessApplicantsHeadOfTheirOwnProfileIsNotRefused() {
+        webTestClient
+            .head()
+            .uri("/services/professionalservice/api/profile")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+    }
+
+    /**
+     * ⚠ <b>The singular island does not open the plural clinician directory.</b>
+     *
+     * <p>{@code /api/profile} is a prefix of {@code /api/profiles} as a string, so "does the new
+     * matcher reach the old path" is a question about Spring's pattern matching that reading two
+     * configuration files cannot settle. Both directions are asserted: the applicant above reaches
+     * the singular path, and the same applicant is still refused the plural one here — where the
+     * service additionally holds {@code ROLE_ADMIN}, but this rule is what stops the request
+     * arriving at all.
+     */
+    @ParameterizedTest
+    @ValueSource(
+        strings = {
+            "/services/professionalservice/api/profiles",
+            "/services/professionalservice/api/profiles/any-id",
+            "/services/professionalservice/api/profiles/account/any-account",
+        }
+    )
+    void theOwnProfileIslandDoesNotExtendToThePluralDirectory(String path) {
+        expectForbidden(path, AuthoritiesConstants.USER);
+    }
+
+    /**
+     * Nor does it extend sideways: the island is the exact path and nothing under it.
+     *
+     * <p>{@code /api/personal-document} and T3's {@code /api/professional-application} are separate
+     * paths with their own tasks and their own rules — the first of those has since arrived and has
+     * its own cases below, including the prefix it genuinely needs and this one does not. A
+     * {@code /**} matcher here would pre-authorise paths nobody has designed yet, which is how an
+     * island stops being a list of decisions and becomes a prefix.
+     */
+    @ParameterizedTest
+    @ValueSource(
+        strings = { "/services/professionalservice/api/profile/anything", "/services/professionalservice/api/profile/account/any-account" }
+    )
+    void theOwnProfileIslandIsTheExactPathAndNothingUnderIt(String path) {
+        expectForbidden(path, AuthoritiesConstants.USER);
+    }
+
+    /** A token this gateway did not mint gets the island too, and that is the island's whole design. */
+    @Test
+    void aTokenBearingTheCareAngelAuthorityAlsoReachesTheOwnProfilePath() {
+        expectPastAuthorization("/services/professionalservice/api/profile", "ROLE_ANGEL");
+    }
+
+    // --- /api/personal-document (singular): the applicant's own credentials, T0 for T2 ------------
+    //
+    // profile.md's step 3 moves the applicant's document upload off /api/onboarding/documents and
+    // onto `/api/personal-document`. api/SecurityConfiguration holds that path AND the prefix under it
+    // at .authenticated(), so this gateway must mirror both — a gateway stricter than the service it
+    // fronts refuses a request the service was written to serve, AND THE REFUSAL IS ATTRIBUTED TO THE
+    // SERVICE. ClinicalAuthorityMatrixIT holds the service's half.
+    //
+    // THIS ISLAND IS A PREFIX AND /api/profile's IS NOT. That is not an inconsistency: this path has a
+    // real sub-resource, /{id}/content, which is the only route by which document bytes leave
+    // professionalservice. A prefix is a widening, so the cases below assert where it STOPS as
+    // carefully as what it admits.
+
+    /** The list, by an account holding nothing but {@code ROLE_USER} — which is every applicant. */
+    @Test
+    void aRoleLessApplicantReachesTheirOwnDocuments() {
+        expectPastAuthorization("/services/professionalservice/api/personal-document", AuthoritiesConstants.USER);
+    }
+
+    /**
+     * And the <b>upload</b>, which is the half the service's mutation matrix would otherwise refuse
+     * and the half a {@code GET}-scoped matcher here would silently drop.
+     *
+     * <p>Step 3 writes through this path. A matcher scoped to {@code HttpMethod.GET} would admit the
+     * list and refuse the upload, and the symptom — an applicant whose documents screen loads and
+     * will not accept a file — reads as a broken upload rather than as a narrow rule.
+     */
+    @Test
+    void aRoleLessApplicantMayPostTheirOwnDocument() {
+        webTestClient
+            .post()
+            .uri("/services/professionalservice/api/personal-document")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+    }
+
+    /** And a {@code HEAD} of the list, the verb a {@code GET}-scoped rule drops. */
+    @Test
+    void aRoleLessApplicantsHeadOfTheirOwnDocumentsIsNotRefused() {
+        webTestClient
+            .head()
+            .uri("/services/professionalservice/api/personal-document")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+    }
+
+    /** The sub-resource the prefix exists for — the authorized byte stream. */
+    @Test
+    void aRoleLessApplicantReachesTheDocumentContentSubResource() {
+        expectPastAuthorization("/services/professionalservice/api/personal-document/any-id/content", AuthoritiesConstants.USER);
+    }
+
+    /**
+     * ⛔ <b>The prefix stops at the singular path and does not reach the plural CRUD surface.</b>
+     *
+     * <p>{@code /api/personal-document} is a prefix of {@code /api/personal-documents} as a string, so
+     * "does the new matcher reach the old path" is a question about Spring's pattern matching that
+     * reading two configuration files cannot settle. ⚠ <b>The stakes here are higher than on
+     * {@code /api/profile}</b>: {@code PersonalDocumentResource}'s three reads carry no authority
+     * check of their own and return {@code data} inline (profile-addendum.md S1), so the authority
+     * rule below is the only thing keeping a role-less applicant — and every account in the two
+     * sibling products, over the shared signing key — away from every clinician's identity documents.
+     */
+    @ParameterizedTest
+    @ValueSource(
+        strings = {
+            "/services/professionalservice/api/personal-documents",
+            "/services/professionalservice/api/personal-documents/any-id",
+            "/services/professionalservice/api/personal-documents/profile/any-profile",
+        }
+    )
+    void theOwnDocumentIslandDoesNotExtendToThePluralCrudSurface(String path) {
+        expectForbidden(path, AuthoritiesConstants.USER);
+    }
+
+    /** A token this gateway did not mint gets this island too, for the reason the island exists. */
+    @Test
+    void aTokenBearingTheCareAngelAuthorityAlsoReachesTheOwnDocumentPath() {
+        expectPastAuthorization("/services/professionalservice/api/personal-document", "ROLE_ANGEL");
+    }
+
+    // --- /api/professional-application (singular): the applicant's own application, T0 for T3 -----
+    //
+    // profile.md's step 4 moves the applicant's consent, requested authority and submission off
+    // /api/onboarding/applications and onto `/api/professional-application`.
+    // api/SecurityConfiguration holds that path AND the prefix under it at .authenticated(), so this
+    // gateway must mirror both — a gateway stricter than the service it fronts refuses a request the
+    // service was written to serve, AND THE REFUSAL IS ATTRIBUTED TO THE SERVICE.
+    // ClinicalAuthorityMatrixIT holds the service's half, including the ROLE_ADMIN rules this
+    // gateway deliberately does not duplicate.
+    //
+    // THE ISLAND HERE IS WIDER THAN THE APPLICANT'S OWN SURFACE AND THAT IS THE DESIGN, not an
+    // oversight: the review queue, the seven reviewer transitions and /compliance/** live under the
+    // same prefix and are ROLE_ADMIN IN THE SERVICE. Narrowing this to /me would be the LOOSER
+    // answer for a doctor (who already passes `/services/** -> CLINICAL_AND_ADMIN`) and a BROKEN one
+    // for an administrator, so the case below pins that an admin reaches the queue through here.
+
+    /** The applicant's own application — the read the wizard opens with. */
+    @Test
+    void aRoleLessApplicantReachesTheirOwnApplication() {
+        expectPastAuthorization("/services/professionalservice/api/professional-application/me", AuthoritiesConstants.USER);
+    }
+
+    /**
+     * ⛔ <b>And step 4's two writes, which are the half a {@code GET}-scoped matcher would silently
+     * drop and the half the service's mutation matrix would otherwise refuse.</b>
+     *
+     * <p>Step 4 writes through this path twice over — the {@code POST} that starts an application and
+     * the {@code PUT} that stores the consent and submits it. An applicant holds {@code ROLE_USER}
+     * and nothing else, so a verb-scoped rule here produces the worst symptom in the set: a consent
+     * screen that loads, shows the role dropdown, and refuses to save.
+     */
+    @Test
+    void aRoleLessApplicantMayStartAndSubmitTheirOwnApplication() {
+        webTestClient
+            .post()
+            .uri("/services/professionalservice/api/professional-application")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+        webTestClient
+            .put()
+            .uri("/services/professionalservice/api/professional-application/me")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+        webTestClient
+            .put()
+            .uri("/services/professionalservice/api/professional-application/me/submit")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+    }
+
+    /** And a {@code HEAD} of the own read, the verb a {@code GET}-scoped rule drops. */
+    @Test
+    void aRoleLessApplicantsHeadOfTheirOwnApplicationIsNotRefused() {
+        webTestClient
+            .head()
+            .uri("/services/professionalservice/api/professional-application/me")
+            .headers(headers -> headers.setBearerAuth(token(AuthoritiesConstants.USER)))
+            .exchange()
+            .expectStatus()
+            .isNotFound();
+    }
+
+    /**
+     * ⚠ <b>An administrator reaches the review queue and the compliance surface through the same
+     * prefix</b>, which is what makes the width of this island deliberate rather than accidental.
+     *
+     * <p>If this rule were narrowed to {@code /me}, these three would fall to
+     * {@code /services/** -> CLINICAL_AND_ADMIN} — which still admits an administrator, so the
+     * refusal would not show here — and the real cost would land in the service, where
+     * {@code ROLE_ADMIN} is enforced. The case is here so that a future narrowing has to argue with
+     * a test rather than with a comment.
+     */
+    @ParameterizedTest
+    @ValueSource(
+        strings = {
+            "/services/professionalservice/api/professional-application",
+            "/services/professionalservice/api/professional-application/any-id/events",
+            "/services/professionalservice/api/professional-application/compliance/metrics",
+        }
+    )
+    void anAdministratorReachesTheApplicationAdminSurfaceThroughTheSamePrefix(String path) {
+        expectPastAuthorization(path, AuthoritiesConstants.ADMIN);
+    }
+
+    /**
+     * ⛔ <b>The prefix stops at the singular path.</b>
+     *
+     * <p>There is no {@code /api/professional-applications} — plural — resource in the service, and
+     * there must not come to be one by accident: an unmapped path reached by this island would be
+     * pre-authorised for a role-less caller before anybody designed it. Asserted the same way the
+     * two sibling islands assert their edges, because "does one pattern reach the other" is a
+     * question about Spring's matching that reading two configuration files cannot settle.
+     */
+    @ParameterizedTest
+    @ValueSource(
+        strings = {
+            "/services/professionalservice/api/professional-applications",
+            "/services/professionalservice/api/professional-applications/any-id",
+        }
+    )
+    void theOwnApplicationIslandDoesNotExtendToAPluralPath(String path) {
+        expectForbidden(path, AuthoritiesConstants.USER);
+    }
+
+    /** A token this gateway did not mint gets this island too, for the reason the island exists. */
+    @Test
+    void aTokenBearingTheCareAngelAuthorityAlsoReachesTheOwnApplicationPath() {
+        expectPastAuthorization("/services/professionalservice/api/professional-application/me", "ROLE_ANGEL");
+    }
+
     // --- what this change must not have weakened --------------------------------------------
 
     /** Unauthenticated is still 401, on every one of them, island or not. */
@@ -400,6 +700,11 @@ class ServicesRouteAuthorizationIT {
             PATIENT_SERVICE,
             ADMIN_SERVICE,
             "/services/professionalservice/api/onboarding/progress",
+            "/services/professionalservice/api/profile",
+            "/services/professionalservice/api/personal-document",
+            "/services/professionalservice/api/personal-document/any-id/content",
+            "/services/professionalservice/api/professional-application",
+            "/services/professionalservice/api/professional-application/me",
             "/services/professionalservice/api/messaging/unread-count",
             "/services/professionalservice/api/duty-roster",
         }

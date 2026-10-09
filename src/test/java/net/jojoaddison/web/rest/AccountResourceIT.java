@@ -7,6 +7,7 @@ import java.util.*;
 import java.util.stream.Stream;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.config.Constants;
+import net.jojoaddison.domain.Authority;
 import net.jojoaddison.domain.User;
 import net.jojoaddison.repository.AuthorityRepository;
 import net.jojoaddison.repository.UserRepository;
@@ -128,8 +129,13 @@ class AccountResourceIT {
             .isEqualTo("http://placehold.it/50x50")
             .jsonPath("$.langKey")
             .isEqualTo("en")
+            // ⚠ TWO authorities since F7, and the second one is the point of that finding:
+            // profile.md says "always append ROLE_USER by default in the gateway", and
+            // UserService.createUser — the invitation path this fixture uses — appended nothing.
+            // The requested ROLE_ADMIN is still here, because "append" is not "replace";
+            // EveryAccountGetsRoleUserIT holds both halves.
             .jsonPath("$.authorities")
-            .isEqualTo(AuthoritiesConstants.ADMIN);
+            .value(org.hamcrest.Matchers.containsInAnyOrder(AuthoritiesConstants.USER, AuthoritiesConstants.ADMIN));
     }
 
     @Test
@@ -600,6 +606,350 @@ class AccountResourceIT {
         assertThat(updatedUser.getEmail()).isEqualTo("save-existing-email-and-login@example.com");
     }
 
+    /**
+     * T4's happy path: {@code PUT /api/account} writes the five fields and nothing else.
+     *
+     * <p>The twin of {@code testSaveAccount}, which stays green beside it because the deprecated
+     * {@code POST} is now an adapter over the same write. Both are kept until T6 retires the verb;
+     * see {@code AccountResource#saveAccount}.
+     */
+    @Test
+    @WithMockUser("update-account")
+    void testUpdateAccount() throws Exception {
+        User user = new User();
+        user.setLogin("update-account");
+        user.setEmail("update-account@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        AdminUserDTO accountDTO = ownAccountBody(
+            "firstname",
+            "lastname",
+            "update-account@example.com",
+            Constants.DEFAULT_LANGUAGE,
+            "http://placehold.it/50x50"
+        );
+
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(om.writeValueAsBytes(accountDTO))
+            .exchange()
+            .expectStatus()
+            .isOk();
+
+        User updatedUser = userRepository.findOneByLogin(user.getLogin()).block();
+        assertThat(updatedUser.getFirstName()).isEqualTo(accountDTO.getFirstName());
+        assertThat(updatedUser.getLastName()).isEqualTo(accountDTO.getLastName());
+        assertThat(updatedUser.getEmail()).isEqualTo(accountDTO.getEmail());
+        assertThat(updatedUser.getLangKey()).isEqualTo(accountDTO.getLangKey());
+        assertThat(updatedUser.getImageUrl()).isEqualTo(accountDTO.getImageUrl());
+        assertThat(updatedUser.getPassword()).isEqualTo(user.getPassword());
+    }
+
+    /**
+     * ⛔ <b>{@code profile.md}: "Do not update the fields {@code id}, {@code activated} and
+     * {@code login} from this endpoint."</b> (F4)
+     *
+     * <p>Asserted against <b>raw JSON</b> rather than a DTO, and since F4 that is no longer because
+     * the type forbids writing it: {@link AdminUserDTO} is what this endpoint binds, exactly as the
+     * specification names, so all four fields below are now <em>sendable</em>. What refuses them is
+     * {@code AccountResource#ownAccountUpdate}, which reads five values by name, and
+     * {@code UserService}'s five-argument {@code updateUser}, which is the only write reached from
+     * here. ⚠ Raw JSON is kept anyway, so the case cannot be weakened by a change to a constructor.
+     *
+     * <p>⚠ <b>The request succeeds.</b> "Do not update" is not "refuse the request" —
+     * {@code GET /api/account} answers an {@code AdminUserDTO} carrying all three and the obvious
+     * client sends the document straight back, so a 400 would make the endpoint unusable by the only
+     * caller the specification describes. The five allowed fields land and the three forbidden
+     * values stand.
+     */
+    @Test
+    @WithMockUser("update-account-identity")
+    void testUpdateAccountDoesNotUpdateIdActivatedOrLogin() {
+        User user = new User();
+        user.setLogin("update-account-identity");
+        user.setEmail("update-account-identity@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        putRawBody(
+            """
+            {
+              "id": "some-other-id",
+              "login": "not-used",
+              "firstName": "firstname",
+              "lastName": "lastname",
+              "email": "update-account-identity@example.com",
+              "langKey": "en",
+              "imageUrl": "http://placehold.it/50x50",
+              "activated": false
+            }
+            """
+        );
+
+        User updatedUser = userRepository.findOneByLogin("update-account-identity").block();
+        // The control: the five allowed fields did land, so the three below were not merely unread
+        // because the whole request was ignored.
+        assertThat(updatedUser.getFirstName()).isEqualTo("firstname");
+        assertThat(updatedUser.getId()).as("id is not updated from this endpoint").isEqualTo(user.getId());
+        assertThat(updatedUser.getLogin()).as("login is not updated from this endpoint").isEqualTo("update-account-identity");
+        assertThat(updatedUser.isActivated()).as("activated is not updated from this endpoint").isTrue();
+    }
+
+    /**
+     * ⛔ <b>And {@code authorities} is unwritable, which is not a deny-list entry but the point of the
+     * whole endpoint.</b>
+     *
+     * <p>The career role is a <em>request</em> granted after review, written on
+     * {@code ProfessionalApplication}, never on the account by its holder. The one edit that would
+     * break this is routing the handler through {@code UserService.updateUser(AdminUserDTO)}, which
+     * clears the authority set and refills it from the body — so this case is the guard on that
+     * specific mistake rather than on the field in general.
+     *
+     * <p>Two bodies, because they fail differently: granting {@code ROLE_ADMIN} to an account with
+     * none, and <em>removing</em> an authority from an account that has one. An implementation that
+     * cleared the set and refilled it would pass the first and fail the second.
+     */
+    @Test
+    @WithMockUser("update-account-authorities")
+    void testUpdateAccountDoesNotWriteAuthorities() {
+        User user = new User();
+        user.setLogin("update-account-authorities");
+        user.setEmail("update-account-authorities@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        Authority granted = new Authority();
+        granted.setName(AuthoritiesConstants.USER);
+        user.setAuthorities(new java.util.HashSet<>(java.util.Set.of(granted)));
+        userRepository.save(user).block();
+
+        putRawBody(
+            """
+            {
+              "login": "not-used",
+              "firstName": "firstname",
+              "lastName": "lastname",
+              "email": "update-account-authorities@example.com",
+              "langKey": "en",
+              "authorities": ["ROLE_ADMIN"]
+            }
+            """
+        );
+
+        assertThat(userRepository.findOneByLogin("update-account-authorities").block().getAuthorities())
+            .as("a body cannot grant an authority")
+            .extracting(Authority::getName)
+            .containsExactly(AuthoritiesConstants.USER);
+
+        putRawBody(
+            """
+            {
+              "login": "not-used",
+              "firstName": "firstname",
+              "lastName": "lastname",
+              "email": "update-account-authorities@example.com",
+              "langKey": "en",
+              "authorities": []
+            }
+            """
+        );
+
+        assertThat(userRepository.findOneByLogin("update-account-authorities").block().getAuthorities())
+            .as("nor take one away — an implementation that cleared and refilled would pass the first body and fail this one")
+            .extracting(Authority::getName)
+            .containsExactly(AuthoritiesConstants.USER);
+    }
+
+    /**
+     * ⚠ <b>A body with no {@code login} is refused with a 400, and that is a consequence of binding
+     * the type the specification names.</b>
+     *
+     * <p>{@code AdminUserDTO.login} is {@code @NotBlank}, so {@code @Valid} rejects the request
+     * before the handler runs — even though {@link AccountResource#updateUserAccount} would then
+     * ignore the value. Recorded as a case rather than left to be discovered, because it is a
+     * <em>new</em> refusal: the five-component record this endpoint used to bind had no login at all
+     * and a body without one was fine.
+     *
+     * <p>It costs the caller the specification describes nothing — {@code GET /api/account} answers
+     * the login and step 1's dialog is populated from it — and it makes the two verbs refuse the
+     * same bodies, which is the property {@code AccountResource#saveAccount}'s javadoc relies on
+     * while both exist.
+     */
+    @Test
+    @WithMockUser("update-account-no-login")
+    void testUpdateAccountWithoutALoginIsRefused() {
+        User user = new User();
+        user.setLogin("update-account-no-login");
+        user.setEmail("update-account-no-login@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(
+                """
+                {
+                  "firstName": "firstname",
+                  "lastName": "lastname",
+                  "email": "update-account-no-login@example.com",
+                  "langKey": "en"
+                }
+                """
+            )
+            .exchange()
+            .expectStatus()
+            .isBadRequest();
+
+        assertThat(userRepository.findOneByLogin("update-account-no-login").block().getFirstName())
+            .as("a refused request writes nothing")
+            .isNull();
+    }
+
+    /**
+     * The list in the handler names the three fields the specification names, and nothing else.
+     *
+     * <p>A constant nothing compares against is prose; this is what ties
+     * {@code AccountResource.FIELDS_THIS_ENDPOINT_DOES_NOT_UPDATE} to the two cases above, so that
+     * adding a fourth name to it without a case, or removing one that has a case, goes red.
+     */
+    @Test
+    void theForbiddenFieldListIsTheOneTheSpecificationNames() {
+        assertThat(AccountResource.FIELDS_THIS_ENDPOINT_DOES_NOT_UPDATE).containsExactly("id", "activated", "login");
+    }
+
+    @Test
+    @WithMockUser("update-invalid-email")
+    void testUpdateAccountInvalidEmail() throws Exception {
+        User user = new User();
+        user.setLogin("update-invalid-email");
+        user.setEmail("update-invalid-email@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        AdminUserDTO accountDTO = ownAccountBody(
+            "firstname",
+            "lastname",
+            "invalid email",
+            Constants.DEFAULT_LANGUAGE,
+            "http://placehold.it/50x50"
+        );
+
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(om.writeValueAsBytes(accountDTO))
+            .exchange()
+            .expectStatus()
+            .isBadRequest();
+
+        assertThat(userRepository.findOneByEmailIgnoreCase("invalid email").blockOptional()).isNotPresent();
+    }
+
+    @Test
+    @WithMockUser("update-existing-email")
+    void testUpdateAccountExistingEmail() throws Exception {
+        User user = new User();
+        user.setLogin("update-existing-email");
+        user.setEmail("update-existing-email@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        User anotherUser = new User();
+        anotherUser.setLogin("update-existing-email2");
+        anotherUser.setEmail("update-existing-email2@example.com");
+        anotherUser.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        anotherUser.setActivated(true);
+        userRepository.save(anotherUser).block();
+
+        AdminUserDTO accountDTO = ownAccountBody(
+            "firstname",
+            "lastname",
+            "update-existing-email2@example.com",
+            Constants.DEFAULT_LANGUAGE,
+            "http://placehold.it/50x50"
+        );
+
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(om.writeValueAsBytes(accountDTO))
+            .exchange()
+            .expectStatus()
+            .isBadRequest();
+
+        User updatedUser = userRepository.findOneByLogin("update-existing-email").block();
+        assertThat(updatedUser.getEmail()).isEqualTo("update-existing-email@example.com");
+    }
+
+    /**
+     * Re-sending one's own address is the ordinary case and must not be refused.
+     *
+     * <p>The email rule is "belongs to a different login", not "is already in use". Written as the
+     * latter it would refuse every save in which the clinician did not change their address — which
+     * is most of them.
+     */
+    @Test
+    @WithMockUser("update-existing-email-and-login")
+    void testUpdateAccountExistingEmailAndLogin() throws Exception {
+        User user = new User();
+        user.setLogin("update-existing-email-and-login");
+        user.setEmail("update-existing-email-and-login@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        AdminUserDTO accountDTO = ownAccountBody(
+            "firstname",
+            "lastname",
+            "update-existing-email-and-login@example.com",
+            Constants.DEFAULT_LANGUAGE,
+            "http://placehold.it/50x50"
+        );
+
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(om.writeValueAsBytes(accountDTO))
+            .exchange()
+            .expectStatus()
+            .isOk();
+
+        User updatedUser = userRepository.findOneByLogin("update-existing-email-and-login").block();
+        assertThat(updatedUser.getEmail()).isEqualTo("update-existing-email-and-login@example.com");
+    }
+
+    /**
+     * That the {@code .authenticated()} gate reaches the new verb.
+     *
+     * <p>{@code SecurityConfiguration} holds {@code /api/**} with no method scoping, so {@code PUT}
+     * needed no rule of its own — this asserts that rather than trusting the read of the config, and
+     * it is the case that would fail if somebody later scoped that matcher to a verb list.
+     */
+    @Test
+    @WithUnauthenticatedMockUser
+    void testUpdateAccountRequiresAuthentication() {
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("{\"firstName\":\"firstname\",\"lastName\":\"lastname\",\"langKey\":\"en\"}")
+            .exchange()
+            .expectStatus()
+            .isUnauthorized();
+    }
+
     @Test
     @WithMockUser("change-password-wrong-existing-password")
     void testChangePasswordWrongExistingPassword() throws Exception {
@@ -837,5 +1187,49 @@ class AccountResourceIT {
             .exchange()
             .expectStatus()
             .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    // -------------------------------------------------------------------------------------------------
+    // PUT /api/account helpers (F4)
+    // -------------------------------------------------------------------------------------------------
+
+    /**
+     * An {@link AdminUserDTO} carrying only the five fields step 1 edits.
+     *
+     * <p>⚠ <b>It deliberately leaves {@code id}, {@code login}, {@code activated} and
+     * {@code authorities} unset rather than being a narrower type that cannot hold them</b> — since
+     * F4 the endpoint binds {@code AdminUserDTO}, as {@code profile.md} names, so the happy-path
+     * cases send what a well-behaved client sends and
+     * {@link #testUpdateAccountDoesNotUpdateIdActivatedOrLogin} sends what a careless one does.
+     */
+    private static AdminUserDTO ownAccountBody(String firstName, String lastName, String email, String langKey, String imageUrl) {
+        AdminUserDTO accountDTO = new AdminUserDTO();
+        // ⚠ A login is REQUIRED on the wire and IGNORED by the write, which is a real consequence of
+        // binding the type profile.md names: AdminUserDTO.login is @NotBlank, so @Valid refuses a
+        // body without one with a 400 before the handler runs. It is not a hardship for the caller
+        // the specification describes — GET /api/account answers the login and step 1's dialog is
+        // populated from exactly that — and the deprecated POST has always behaved this way, which
+        // is the property this file's javadoc calls "both verbs refuse the same bodies". The value
+        // is deliberately not the caller's, so a case that passed because the login was honoured
+        // would be visible.
+        accountDTO.setLogin("not-used");
+        accountDTO.setFirstName(firstName);
+        accountDTO.setLastName(lastName);
+        accountDTO.setEmail(email);
+        accountDTO.setLangKey(langKey);
+        accountDTO.setImageUrl(imageUrl);
+        return accountDTO;
+    }
+
+    /** {@code PUT /api/account} with a hand-built body, expecting 200. */
+    private void putRawBody(String body) {
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .exchange()
+            .expectStatus()
+            .isOk();
     }
 }

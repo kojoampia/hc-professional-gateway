@@ -27,11 +27,15 @@ import java.util.Map;
  * <h2>What this cannot carry, which is the point worth reading</h2>
  *
  * <p><b>Neither a clinical role nor a licence number, at either moment, and not for want of a
- * field.</b> An account here is created holding {@code ROLE_USER} alone — the nine clinical
+ * field.</b> An account here is created holding {@code ROLE_USER} alone — the <b>eight</b> clinical
  * authorities are granted later, by an administrator, at the {@code AUTHORITY_ASSIGNED} step of the
- * onboarding state machine in {@code api/}. The discipline the applicant asked for is
- * {@code ProfessionalApplication.requestedRole}, written by the wizard in {@code api/} and never
- * seen by this gateway. And a licence <em>number</em> exists nowhere in this subsystem at all:
+ * onboarding state machine in {@code api/}. (Nine until backlog.md item 44 removed
+ * {@code ROLE_ANGEL} from this subsystem entirely; this sentence said nine until F-C.) The
+ * discipline the applicant asked for is {@code ProfessionalApplication.authority} — named
+ * {@code requestedRole} until {@code profile.md}'s T3, and this sentence named the retired field
+ * until F-C renamed the last of it, including the {@code onboarding.state} payload key. It is
+ * written by the wizard in {@code api/} and never seen by this gateway. And a licence
+ * <em>number</em> exists nowhere in this subsystem at all:
  * {@code PersonalDocument} of type {@code LICENSE} carries a name, a checksum, an expiry date and a
  * verification status, and no number field.</p>
  *
