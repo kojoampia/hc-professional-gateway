@@ -216,7 +216,68 @@ class RegistrationEventPublisherTest {
 
         publisher.publishAccountCreated("user-42", "ama.serwaa", "ama@localhost", "en", "ROLE_USER", false);
         publisher.publishAccountActivated("user-42", "ama.serwaa", "ama@localhost");
-        // no exception — neither registration nor activation may fail because Kafka is unavailable
+        publisher.publishAccountDetailsUpdated("user-42", "ama.serwaa", "ama@localhost", true);
+        // no exception — no account write may fail because Kafka is unavailable
+    }
+
+    // --- backlog.md row 230: AccountDetailsUpdated, the frame api/'s completion meter reads --------
+
+    /**
+     * The third estate-shaped type, in the same envelope, on the same topic, under the same key — an
+     * extension of this class rather than new infrastructure, which is what row 230's decision says
+     * it must be.
+     */
+    @Test
+    void publishesAccountDetailsUpdatedInTheEstateShape() {
+        publisher.publishAccountDetailsUpdated("user-42", "ama.serwaa", "  Ama@LOCALHOST ", true);
+
+        ProfessionalEvent event = captureAccountEvent();
+        assertThat(event.eventId()).isNotNull();
+        assertThat(event.type()).isEqualTo("AccountDetailsUpdated");
+        assertThat(event.version()).isEqualTo(1);
+        assertThat(event.occurredAt()).isNotNull();
+        assertThat(event.source()).isEqualTo("hc-professional-gateway");
+        assertThat(event.subject()).isEqualTo(new ProfessionalEvent.Subject("ama@localhost", "user-42"));
+        assertThat(event.data()).containsExactlyEntriesOf(java.util.Map.of("detailsComplete", true));
+    }
+
+    /** The verdict travels in both directions; a consumer that only ever saw {@code true} could not move a step back. */
+    @Test
+    void publishesAnOutstandingStepOneAsFalse() {
+        publisher.publishAccountDetailsUpdated("user-42", "ama.serwaa", "ama@localhost", false);
+
+        assertThat(captureAccountEvent().data()).containsEntry("detailsComplete", false);
+    }
+
+    /**
+     * ⛔ <b>The four fields step 1 is about must never be on this wire</b> — {@code firstName},
+     * {@code lastName}, {@code langKey} and {@code imageUrl} are exactly the personal data the
+     * estate's identifiers-only rule exists for, and a boolean <em>about</em> completeness is the
+     * whole of what the meter needs.
+     *
+     * <p>The method's signature is the first line of that defence — it cannot be handed a first name
+     * — so this case guards the second: that nobody later widens {@code data} to explain the verdict.
+     * {@code langKey} is named among the forbidden keys even though {@code AccountCreated} carries it
+     * legitimately, because <em>this</em> frame has no reason to and a copy-paste from the method
+     * above is how it would arrive.
+     */
+    @Test
+    void accountDetailsUpdatedCarriesTheVerdictAndNoneOfTheFieldsBehindIt() {
+        publisher.publishAccountDetailsUpdated("user-42", "ama.serwaa", "ama@localhost", true);
+
+        ProfessionalEvent event = captureAccountEvent();
+        assertThat(event.data()).containsOnlyKeys("detailsComplete");
+        assertThat(event.data()).doesNotContainKeys("firstName", "lastName", "langKey", "imageUrl", "username", "missing");
+    }
+
+    /** One clinician, one partition, whatever the type — hc-admin's links and api/'s consumer both key on this. */
+    @Test
+    void accountDetailsUpdatedIsKeyedByAccountId() {
+        publisher.publishAccountDetailsUpdated("user-42", "ama.serwaa", "ama@localhost", true);
+
+        ArgumentCaptor<Message<ProfessionalEvent>> captor = accountCaptor();
+        verify(streamBridge).send(eq(RegistrationEventPublisher.REGISTRATION_TOPIC_BINDING), captor.capture());
+        assertThat(new String((byte[]) captor.getValue().getHeaders().get(KafkaHeaders.KEY), StandardCharsets.UTF_8)).isEqualTo("user-42");
     }
 
     private ProfessionalEvent captureAccountEvent() {

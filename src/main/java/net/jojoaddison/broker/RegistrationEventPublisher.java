@@ -17,8 +17,9 @@ import org.springframework.stereotype.Component;
  * Publishes everything this gateway puts on {@code hc.professional.registration} for the admin
  * portal: {@code registration.created}, the opening {@code onboarding.state}
  * (professional-onboarding-workflow.md § Domain events, and § "Onboarding state events and the
- * completion contract"), and the two estate-shaped account events
- * {@link ProfessionalEventType}. Fired for both self-service registration and
+ * completion contract"), and the three estate-shaped account events
+ * {@link ProfessionalEventType} — the third, {@code AccountDetailsUpdated}, added by backlog.md
+ * row 230 so that {@code api/}'s completion meter can see step 1. Fired for both self-service registration and
  * administrator-created (invitation) accounts. Every record is keyed by accountId; publishing never
  * breaks the write path — failures are logged, not propagated.
  *
@@ -145,6 +146,45 @@ public class RegistrationEventPublisher {
             // username repeated rather than assumed: at-least-once delivery is not
             // at-least-once *ordering*, so a consumer can see this frame first.
             Map.of("activatedAt", Instant.now().toString(), "username", login)
+        );
+    }
+
+    /**
+     * The account's details were written, and whether onboarding step 1 is now satisfied — the one
+     * frame {@code api/}'s completion meter needs and cannot compute (backlog.md row 230, unit A).
+     *
+     * <p>⛔ <b>{@code data} is one boolean and must stay that way.</b> The four fields behind it —
+     * {@code firstName}, {@code lastName}, {@code langKey}, {@code imageUrl} — are the personal data
+     * the estate's identifiers-only rule exists for, and the whole point of publishing a verdict is
+     * that nothing in the consumer, in the broker or in any log ever holds the values.
+     * {@link net.jojoaddison.service.AccountCompleteness} is where the verdict is decided; see also
+     * {@link ProfessionalEventType#ACCOUNT_DETAILS_UPDATED}.
+     *
+     * <p>⚠ <b>Nothing new is keyed and no new destination is opened.</b> It rides
+     * {@code hc.professional.registration} under the same {@code accountId} partition key as this
+     * clinician's other three frames, so a consumer following one account reads the whole sequence in
+     * order. That is what makes this an extension of this class rather than new infrastructure.
+     *
+     * <p><b>A consumer on this topic that does not recognise the type ignores it</b> — the rule all
+     * three existing types state. hc-admin reads {@code eventType} before {@code type}, so this frame
+     * joins the two account events in costing it one warning per frame until it gains a branch; the
+     * class comment above records that trade and this type does not change it.
+     *
+     * @param detailsComplete {@link net.jojoaddison.service.AccountCompleteness#isComplete} over the
+     *     stored row <b>after</b> the write.
+     */
+    public void publishAccountDetailsUpdated(String accountId, String login, String email, boolean detailsComplete) {
+        sendAccountEvent(
+            ProfessionalEventType.ACCOUNT_DETAILS_UPDATED,
+            accountId,
+            login,
+            email,
+            // ONE KEY. Not the field names, not which of them was empty, not a count — a consumer
+            // that learned which field was blank would hold a fact about a person's record it has no
+            // reason to know, and step 1's pane renders its own field list anyway: web/ is unit B and
+            // reads GET /api/account for that, which is what AccountResource's javadoc says that
+            // endpoint's shape is for.
+            Map.of("detailsComplete", detailsComplete)
         );
     }
 
