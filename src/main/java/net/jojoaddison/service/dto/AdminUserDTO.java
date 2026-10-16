@@ -8,6 +8,7 @@ import java.util.stream.Collectors;
 import net.jojoaddison.config.Constants;
 import net.jojoaddison.domain.Authority;
 import net.jojoaddison.domain.User;
+import net.jojoaddison.domain.enumeration.AccountStatus;
 
 /**
  * A DTO representing a user, with his authorities.
@@ -51,6 +52,24 @@ public class AdminUserDTO implements Serializable {
 
     private Set<String> authorities;
 
+    /**
+     * Where onboarding step 1 stands for this account — {@code profile.md} § "User (account)" and
+     * § "Step 1 — Complete the account", {@code backlog.md} row 249.
+     *
+     * <p><b>The enum, not a {@code String}.</b> Jackson serialises it by name either way, so the
+     * wire is identical; what differs is that an unknown value is a 400 at the edge rather than an
+     * {@code IllegalArgumentException} thrown out of {@code valueOf} somewhere inside a write.
+     *
+     * <p>⛔ <b>Read-only in practice, and nothing in the write path reads it.</b>
+     * {@link net.jojoaddison.web.rest.AccountResource#updateUserAccount} takes five values off this
+     * document <b>by name</b>, and the status is not one of them — the gateway computes it from
+     * what was saved, per {@code profile.md}'s <i>"Set {@code account.status} to {@code COMPLETED}
+     * when every required field is provided and saved"</i>. A status a client could post would be a
+     * client declaring its own onboarding complete, which is the same mistake as writing
+     * {@code authorities} from the body and is refused for the same reason.
+     */
+    private AccountStatus accountStatus;
+
     public AdminUserDTO() {
         // Empty constructor needed for Jackson.
     }
@@ -69,6 +88,10 @@ public class AdminUserDTO implements Serializable {
         this.lastModifiedBy = user.getLastModifiedBy();
         this.lastModifiedDate = user.getLastModifiedDate();
         this.authorities = user.getAuthorities().stream().map(Authority::getName).collect(Collectors.toSet());
+        // Row 249. Without this line the field exists on the wire and is null for everybody, which
+        // is the failure mode worth naming: a client reading it would see "step 1 outstanding" for
+        // an account that had completed it, and nothing would have gone wrong loudly.
+        this.accountStatus = user.getAccountStatus();
     }
 
     public String getId() {
@@ -175,6 +198,14 @@ public class AdminUserDTO implements Serializable {
         this.authorities = authorities;
     }
 
+    public AccountStatus getAccountStatus() {
+        return accountStatus;
+    }
+
+    public void setAccountStatus(AccountStatus accountStatus) {
+        this.accountStatus = accountStatus;
+    }
+
     // prettier-ignore
     @Override
     public String toString() {
@@ -186,11 +217,12 @@ public class AdminUserDTO implements Serializable {
             ", imageUrl='" + imageUrl + '\'' +
             ", activated=" + activated +
             ", langKey='" + langKey + '\'' +
-            ", createdBy=" + createdBy +
-            ", createdDate=" + createdDate +
+            ", createdBy='" + createdBy + '\'' +
+            ", createdDate='" + createdDate + '\'' +
             ", lastModifiedBy='" + lastModifiedBy + '\'' +
-            ", lastModifiedDate=" + lastModifiedDate +
-            ", authorities=" + authorities +
+            ", lastModifiedDate='" + lastModifiedDate + '\'' +
+            ", authorities='" + authorities + '\'' +
+            ", accountStatus='" + accountStatus + '\'' +
             "}";
     }
 }

@@ -6,6 +6,7 @@ import java.util.*;
 import net.jojoaddison.config.Constants;
 import net.jojoaddison.domain.Authority;
 import net.jojoaddison.domain.User;
+import net.jojoaddison.domain.enumeration.AccountStatus;
 import net.jojoaddison.repository.AuthorityRepository;
 import net.jojoaddison.repository.UserRepository;
 import net.jojoaddison.security.AuthoritiesConstants;
@@ -264,6 +265,7 @@ public class UserService {
                 }
                 user.setLangKey(langKey);
                 user.setImageUrl(imageUrl);
+                applyStepOneStatus(user);
                 return saveUser(user);
             })
             .doOnNext(user -> log.debug("Changed Information for User: {}", user))
@@ -335,6 +337,58 @@ public class UserService {
      * Registration's three frames are, because they must reach the partition in a fixed order; this
      * one has nothing to order against and every caller of this method is a write path.
      */
+    /**
+     * The four fields onboarding step 1 requires — {@code profile.md} § "Step 1 — Complete the
+     * account", and the same four {@code web}'s {@code ACCOUNT_STEP_FIELDS} reads.
+     *
+     * <p>⚠ <b>Four, including the avatar.</b> {@code backlog.md} row 232 settled that against
+     * dropping it, and shipped the upload that makes it satisfiable; a trigger of four over a form
+     * of three is what made step 1 reopen for ever.
+     */
+    private static boolean stepOneFieldsProvided(User user) {
+        return (hasText(user.getFirstName()) && hasText(user.getLastName()) && hasText(user.getLangKey()) && hasText(user.getImageUrl()));
+    }
+
+    /** Blank is empty — an untouched input posts whitespace, and counting it would satisfy step 1 with an empty form. */
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    /**
+     * Stamp onboarding step 1's completion on the account — {@code profile.md}: <i>"Set
+     * {@code account.status} to {@code COMPLETED} when every required field is provided and
+     * saved."</i> {@code backlog.md} row 249.
+     *
+     * <p>⛔ <b>Computed here and never bound from a request body.</b> {@code AccountResource} reads
+     * five values off {@link AdminUserDTO} by name and the status is not among them, so this method
+     * is the only thing in the gateway that writes it on the self-service path. A status a caller
+     * could post is a caller declaring their own onboarding complete.
+     *
+     * <h2>⚠ It only ever moves an account INTO {@code COMPLETED}, and only from the three statuses
+     * that mean "still onboarding"</h2>
+     *
+     * <p>{@link AccountStatus} mixes two vocabularies — an onboarding one ({@code STARTED},
+     * {@code PENDING}, {@code COMPLETED}) and an administrative one ({@code ACTIVE},
+     * {@code SUSPENDED}, {@code CLOSED}, {@code CANCELLED}, {@code ON_HOLD}, {@code INACTIVE}). A
+     * rule that wrote {@code COMPLETED} unconditionally would let a clinician un-suspend themselves
+     * by saving their own name, which is a privilege escalation wearing the clothes of a profile
+     * edit. So an account in any administrative state is left exactly as it is.
+     *
+     * <p>⛔ <b>And it never moves backwards.</b> Clearing the avatar does not return a
+     * {@code COMPLETED} account to {@code STARTED}: step 1 is a milestone that was reached, the
+     * downstream meter and the wizard both read it as "this has happened", and a backward write
+     * would make an applicant's progress flicker on an ordinary edit. Whether an emptied required
+     * field should re-open the step is a product question nobody has answered; until someone does,
+     * the safe direction is the one that cannot lose a milestone.
+     */
+    private static void applyStepOneStatus(User user) {
+        AccountStatus current = user.getAccountStatus();
+        boolean stillOnboarding = current == null || current == AccountStatus.STARTED || current == AccountStatus.PENDING;
+        if (stillOnboarding && stepOneFieldsProvided(user)) {
+            user.setAccountStatus(AccountStatus.COMPLETED);
+        }
+    }
+
     private Mono<User> saveUser(User user) {
         return SecurityUtils.getCurrentUserLogin()
             .switchIfEmpty(Mono.just(Constants.SYSTEM))
