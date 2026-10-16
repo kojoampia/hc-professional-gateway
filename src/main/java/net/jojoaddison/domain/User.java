@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 import net.jojoaddison.config.Constants;
+import net.jojoaddison.domain.enumeration.AccountStatus;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.Indexed;
@@ -76,6 +77,9 @@ public class User extends AbstractAuditingEntity<String> implements Serializable
 
     @JsonIgnore
     private Set<Authority> authorities = new HashSet<>();
+
+    @Field("account_status")
+    private AccountStatus accountStatus;
 
     public String getId() {
         return id;
@@ -180,6 +184,14 @@ public class User extends AbstractAuditingEntity<String> implements Serializable
 
     public void setAuthorities(Set<Authority> authorities) {
         this.authorities = authorities;
+    }
+
+    public AccountStatus getAccountStatus() {
+        return accountStatus;
+    }
+
+    public void setAccountStatus(AccountStatus accountStatus) {
+        this.accountStatus = accountStatus;
     }
 
     @Override

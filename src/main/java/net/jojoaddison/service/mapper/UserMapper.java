@@ -55,6 +55,13 @@ public class UserMapper {
             user.setLangKey(userDTO.getLangKey());
             Set<Authority> authorities = this.authoritiesFromStrings(userDTO.getAuthorities());
             user.setAuthorities(authorities);
+            // ⛔ accountStatus is deliberately NOT copied from the document, and the omission is the
+            // decision rather than an oversight. profile.md § "Step 1" makes it the gateway's to
+            // write — "Set account.status to COMPLETED when every required field is provided and
+            // saved" — so UserService.updateUser derives it from what was actually stored. A value
+            // taken off an inbound body would let a caller declare their own onboarding complete,
+            // which is the same escalation AccountResource's five-values-by-name shape exists to
+            // refuse for authorities and activated. Row 249.
             return user;
         }
     }

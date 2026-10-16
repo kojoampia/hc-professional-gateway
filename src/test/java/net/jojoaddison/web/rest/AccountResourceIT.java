@@ -9,6 +9,7 @@ import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.config.Constants;
 import net.jojoaddison.domain.Authority;
 import net.jojoaddison.domain.User;
+import net.jojoaddison.domain.enumeration.AccountStatus;
 import net.jojoaddison.repository.AuthorityRepository;
 import net.jojoaddison.repository.UserRepository;
 import net.jojoaddison.security.AuthoritiesConstants;
@@ -1219,6 +1220,150 @@ class AccountResourceIT {
         accountDTO.setLangKey(langKey);
         accountDTO.setImageUrl(imageUrl);
         return accountDTO;
+    }
+
+    /**
+     * ⭐ <b>Step 1's completion is stamped by the gateway when the four required fields are saved</b>
+     * — {@code profile.md} § "Step 1 — Complete the account": <i>"Set {@code account.status} to
+     * {@code COMPLETED} when every required field is provided and saved."</i> {@code backlog.md}
+     * row 249.
+     *
+     * <p>⚠ <b>Both halves in one case, because either alone would pass for the wrong reason.</b>
+     * Saving three of the four fields must leave the status alone, and the fourth must be what
+     * flips it — a case that only sent a complete body would equally pass against an
+     * implementation that stamped {@code COMPLETED} on every write, which is the defect worth
+     * catching: step 1 would read as done for an applicant with no avatar.
+     */
+    @Test
+    @WithMockUser("step-one-status")
+    void stepOneCompletesOnlyWhenAllFourRequiredFieldsAreSaved() throws Exception {
+        User user = new User();
+        user.setLogin("step-one-status");
+        user.setEmail("step-one-status@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        userRepository.save(user).block();
+
+        // Three of four: no avatar, which is exactly the applicant row 232 shipped the upload for.
+        AdminUserDTO withoutAvatar = ownAccountBody(
+            "firstname",
+            "lastname",
+            "step-one-status@example.com",
+            Constants.DEFAULT_LANGUAGE,
+            null
+        );
+        putOwnAccount(withoutAvatar);
+
+        assertThat(userRepository.findOneByLogin("step-one-status").block().getAccountStatus()).isNull();
+
+        putOwnAccount(
+            ownAccountBody("firstname", "lastname", "step-one-status@example.com", Constants.DEFAULT_LANGUAGE, "http://placehold.it/50x50")
+        );
+
+        assertThat(userRepository.findOneByLogin("step-one-status").block().getAccountStatus()).isEqualTo(AccountStatus.COMPLETED);
+    }
+
+    /**
+     * ⛔ <b>The status is not writable from the request body, and this is the case that says so.</b>
+     *
+     * <p>{@link AdminUserDTO} carries {@code accountStatus} because {@code GET /api/account} must
+     * answer it, and this endpoint binds that whole document — so the field is <em>sendable</em>,
+     * exactly like {@code activated}, {@code authorities}, {@code id} and {@code login} before it.
+     * What refuses it is {@code AccountResource#ownAccountUpdate} reading five values by name.
+     *
+     * <p>⚠ <b>A SUSPENDED account posting {@code COMPLETED} is the case worth writing</b> rather
+     * than a null one posting anything: it is the escalation shape. If the body were honoured, a
+     * clinician an administrator had suspended would clear that by saving their own name, and the
+     * request would look like an ordinary profile edit in every log. Raw JSON, so a change to the
+     * DTO's constructor cannot weaken it.
+     */
+    @Test
+    @WithMockUser("status-from-body")
+    void theAccountStatusIsNotWritableFromTheRequestBody() throws Exception {
+        User user = new User();
+        user.setLogin("status-from-body");
+        user.setEmail("status-from-body@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        user.setAccountStatus(AccountStatus.SUSPENDED);
+        userRepository.save(user).block();
+
+        putRawBody(
+            """
+            {
+              "login": "not-used",
+              "firstName": "firstname",
+              "lastName": "lastname",
+              "email": "status-from-body@example.com",
+              "langKey": "en",
+              "imageUrl": "http://placehold.it/50x50",
+              "accountStatus": "COMPLETED"
+            }
+            """
+        );
+
+        // The four fields ARE all present, so the only thing keeping SUSPENDED is applyStepOneStatus
+        // refusing to move an account out of an administrative state — not the body being ignored.
+        // Both guards are load-bearing and this asserts the pair.
+        assertThat(userRepository.findOneByLogin("status-from-body").block().getAccountStatus()).isEqualTo(AccountStatus.SUSPENDED);
+    }
+
+    /**
+     * ⚠ <b>Step 1 never un-completes.</b> Clearing the avatar on a {@code COMPLETED} account leaves
+     * the milestone where it is — see {@code UserService.applyStepOneStatus} for why the safe
+     * direction is the one that cannot lose a milestone, and for the product question nobody has
+     * answered.
+     */
+    @Test
+    @WithMockUser("status-no-regress")
+    void stepOneCompletionIsNotWithdrawnWhenARequiredFieldIsCleared() throws Exception {
+        User user = new User();
+        user.setLogin("status-no-regress");
+        user.setEmail("status-no-regress@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        user.setAccountStatus(AccountStatus.COMPLETED);
+        userRepository.save(user).block();
+
+        putOwnAccount(ownAccountBody("firstname", "lastname", "status-no-regress@example.com", Constants.DEFAULT_LANGUAGE, null));
+
+        assertThat(userRepository.findOneByLogin("status-no-regress").block().getAccountStatus()).isEqualTo(AccountStatus.COMPLETED);
+    }
+
+    /** {@code GET /api/account} must answer the status, or nothing downstream can read it. */
+    @Test
+    @WithMockUser("status-on-the-wire")
+    void theAccountStatusIsServedOnTheOwnAccountRead() {
+        User user = new User();
+        user.setLogin("status-on-the-wire");
+        user.setEmail("status-on-the-wire@example.com");
+        user.setPassword(RandomStringUtils.randomAlphanumeric(60));
+        user.setActivated(true);
+        user.setAccountStatus(AccountStatus.COMPLETED);
+        userRepository.save(user).block();
+
+        accountWebTestClient
+            .get()
+            .uri("/api/account")
+            .accept(MediaType.APPLICATION_JSON)
+            .exchange()
+            .expectStatus()
+            .isOk()
+            .expectBody()
+            .jsonPath("$.accountStatus")
+            .isEqualTo("COMPLETED");
+    }
+
+    /** {@code PUT /api/account} with a DTO body, expecting 200. */
+    private void putOwnAccount(AdminUserDTO body) throws Exception {
+        accountWebTestClient
+            .put()
+            .uri("/api/account")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(om.writeValueAsBytes(body))
+            .exchange()
+            .expectStatus()
+            .isOk();
     }
 
     /** {@code PUT /api/account} with a hand-built body, expecting 200. */
